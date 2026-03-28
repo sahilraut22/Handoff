@@ -1,4 +1,17 @@
 #!/usr/bin/env node
 
-// CLI entry point - commands will be wired up in Phase 2
-console.log('handoff CLI - v0.1.0');
+import { Command } from 'commander';
+import { registerInitCommand } from './commands/init.js';
+import { registerExportCommand } from './commands/export.js';
+
+const program = new Command();
+
+program
+  .name('handoff')
+  .description('Seamless context transfer between AI coding agents')
+  .version('0.1.0');
+
+registerInitCommand(program);
+registerExportCommand(program);
+
+program.parse();
