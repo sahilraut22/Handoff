@@ -1,0 +1,163 @@
+import type { HandoffContext, FileChange } from '../types/index.js';
+
+function formatDuration(startIso: string): string {
+  const startMs = new Date(startIso).getTime();
+  const nowMs = Date.now();
+  const diffMs = nowMs - startMs;
+
+  const seconds = Math.floor(diffMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+
+  if (hours > 0) {
+    const remainingMinutes = minutes % 60;
+    return `${hours}h ${remainingMinutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m`;
+  }
+  return `${seconds}s`;
+}
+
+function truncateDiff(diff: string, maxLines: number): string {
+  const lines = diff.split('\n');
+  if (lines.length <= maxLines) return diff;
+  return lines.slice(0, maxLines).join('\n') + `\n\n(truncated - showing first ${maxLines} of ${lines.length} lines)`;
+}
+
+function renderChangeSummary(changes: FileChange[]): string {
+  const modified = changes.filter((c) => c.type === 'modified');
+  const added = changes.filter((c) => c.type === 'added');
+  const deleted = changes.filter((c) => c.type === 'deleted');
+
+  return `**${modified.length} files modified, ${added.length} files added, ${deleted.length} files deleted**`;
+}
+
+function renderFileTable(changes: FileChange[], type: FileChange['type']): string {
+  const filtered = changes.filter((c) => c.type === type);
+  if (filtered.length === 0) return '(none)\n';
+
+  if (type === 'deleted') {
+    return filtered.map((c) => `- \`${c.path}\``).join('\n') + '\n';
+  }
+
+  if (type === 'added') {
+    return filtered.map((c) => {
+      if (c.isBinary) return `- \`${c.path}\` [binary file]`;
+      return `- \`${c.path}\``;
+    }).join('\n') + '\n';
+  }
+
+  // Modified files with line counts
+  const lines = ['| File | Lines Changed |', '|------|--------------|'];
+  for (const change of filtered) {
+    if (change.isBinary) {
+      lines.push(`| \`${change.path}\` | [binary file] |`);
+    } else {
+      const added = change.linesAdded ?? 0;
+      const removed = change.linesRemoved ?? 0;
+      lines.push(`| \`${change.path}\` | +${added} / -${removed} |`);
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
+function renderDiffs(changes: FileChange[], maxLines: number): string {
+  const withDiffs = changes.filter((c) => c.diff && !c.isBinary);
+  if (withDiffs.length === 0) return '';
+
+  const sections: string[] = [];
+  for (const change of withDiffs) {
+    const diff = truncateDiff(change.diff!, maxLines);
+    sections.push(`### ${change.path}\n\n\`\`\`diff\n${diff}\n\`\`\``);
+  }
+  return sections.join('\n\n');
+}
+
+function renderMemory(memoryContents: Record<string, string>): string {
+  const sections: string[] = [];
+  for (const [file, content] of Object.entries(memoryContents)) {
+    sections.push(`### ${file}\n\n${content}`);
+  }
+  return sections.join('\n\n');
+}
+
+export function generateHandoffMarkdown(context: HandoffContext): string {
+  const { session, changes, message, include_memory, memory_contents, config } = context;
+  const duration = formatDuration(session.created_at);
+  const now = new Date().toISOString();
+
+  const parts: string[] = [];
+
+  parts.push('# Handoff Context\n');
+
+  // Session info
+  parts.push('## Session Info');
+  parts.push(`- **Session ID**: ${session.session_id}`);
+  parts.push(`- **Started**: ${session.created_at}`);
+  parts.push(`- **Duration**: ${duration}`);
+  parts.push(`- **Working Directory**: ${session.working_dir}`);
+  if (session.agent_name) {
+    parts.push(`- **Previous Agent**: ${session.agent_name}`);
+  }
+  parts.push('');
+
+  // Summary
+  if (message) {
+    parts.push('## Summary\n');
+    parts.push(message);
+    parts.push('');
+  }
+
+  // Changes
+  parts.push('## Changes This Session\n');
+  parts.push(renderChangeSummary(changes));
+  parts.push('');
+
+  if (changes.length === 0) {
+    parts.push('No changes detected since session start.\n');
+  } else {
+    const modified = changes.filter((c) => c.type === 'modified');
+    const added = changes.filter((c) => c.type === 'added');
+    const deleted = changes.filter((c) => c.type === 'deleted');
+
+    if (modified.length > 0) {
+      parts.push('### Modified Files\n');
+      parts.push(renderFileTable(changes, 'modified'));
+    }
+
+    if (added.length > 0) {
+      parts.push('### New Files\n');
+      parts.push(renderFileTable(changes, 'added'));
+    }
+
+    if (deleted.length > 0) {
+      parts.push('### Deleted Files\n');
+      parts.push(renderFileTable(changes, 'deleted'));
+    }
+  }
+
+  // Full diffs
+  const diffSection = renderDiffs(changes, config.max_diff_lines);
+  if (diffSection) {
+    parts.push('## Full Diffs\n');
+    parts.push(diffSection);
+    parts.push('');
+  }
+
+  // Memory
+  if (include_memory && memory_contents && Object.keys(memory_contents).length > 0) {
+    parts.push('## Agent Memory\n');
+    parts.push(renderMemory(memory_contents));
+    parts.push('');
+  }
+
+  // Footer
+  parts.push('---');
+  parts.push(`*Generated by handoff at ${now}*`);
+  parts.push('');
+
+  return parts.join('\n');
+}
+
+export { formatDuration, truncateDiff };
