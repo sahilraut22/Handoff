@@ -3,6 +3,9 @@
 import { Command } from 'commander';
 import { registerInitCommand } from './commands/init.js';
 import { registerExportCommand } from './commands/export.js';
+import { registerListCommand } from './commands/list.js';
+import { registerNameCommand } from './commands/name.js';
+import { registerStatusCommand } from './commands/status.js';
 
 const program = new Command();
 
@@ -13,5 +16,8 @@ program
 
 registerInitCommand(program);
 registerExportCommand(program);
+registerListCommand(program);
+registerNameCommand(program);
+registerStatusCommand(program);
 
 program.parse();
