@@ -3,6 +3,7 @@
 import { Command } from 'commander';
 import { registerInitCommand } from './commands/init.js';
 import { registerExportCommand } from './commands/export.js';
+import { registerAskCommand } from './commands/ask.js';
 import { registerListCommand } from './commands/list.js';
 import { registerNameCommand } from './commands/name.js';
 import { registerStatusCommand } from './commands/status.js';
@@ -16,6 +17,7 @@ program
 
 registerInitCommand(program);
 registerExportCommand(program);
+registerAskCommand(program);
 registerListCommand(program);
 registerNameCommand(program);
 registerStatusCommand(program);
