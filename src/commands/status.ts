@@ -6,7 +6,12 @@ import { walkFiles, hashAllFiles } from '../lib/snapshot.js';
 import { isTmuxAvailable, listPanes } from '../lib/tmux.js';
 import { detectAgents } from '../lib/agents.js';
 import { formatDuration } from '../lib/markdown.js';
+import { readQueryLog } from '../lib/logger.js';
+import { loadWorkspaceState } from '../lib/workspace.js';
+import { boxTop, boxBottom, boxDivider, boxRow } from '../lib/ui.js';
 import type { Session } from '../types/index.js';
+
+const WIDTH = 65;
 
 export function registerStatusCommand(program: Command): void {
   program
@@ -28,6 +33,7 @@ export function registerStatusCommand(program: Command): void {
       }
 
       const config = await loadConfig(workingDir);
+      const workspaceState = await loadWorkspaceState(workingDir);
 
       // Count changes
       const currentFiles = await walkFiles(workingDir, config.exclude_patterns);
@@ -43,45 +49,55 @@ export function registerStatusCommand(program: Command): void {
         else if (currentHashes[f] !== oldHashes[f]) modified++;
       }
 
-      // Print session info
       const duration = formatDuration(session.created_at);
-      console.log(`Session:     ${session.session_id}`);
-      console.log(`Started:     ${session.created_at} (${duration} ago)`);
-      console.log(`Working Dir: ${session.working_dir}`);
-      console.log(`Tracking:    ${Object.keys(oldHashes).length} files`);
-      console.log('');
-      console.log('Changes since init:');
-      console.log(`  Modified: ${modified} files`);
-      console.log(`  Added:    ${added} files`);
-      console.log(`  Deleted:  ${deleted} files`);
 
+      // Print session block
+      console.log(boxTop(WIDTH));
+      console.log(boxRow('HANDOFF STATUS', WIDTH));
+      console.log(boxDivider(WIDTH));
+      console.log(boxRow(`Session:    ${session.session_id.slice(0, 36)}`, WIDTH));
+      console.log(boxRow(`Project:    ${session.working_dir}`, WIDTH));
+      console.log(boxRow(`Started:    ${duration} ago`, WIDTH));
+      if (workspaceState) {
+        console.log(boxRow(`Workspace:  ${workspaceState.session_name} (${workspaceState.panes.length} panes)`, WIDTH));
+      }
       if (session.last_export) {
-        const exportDuration = formatDuration(session.last_export);
-        console.log('');
-        console.log(`Last export: ${session.last_export} (${exportDuration} ago)`);
+        console.log(boxRow(`Last Export: ${formatDuration(session.last_export)} ago`, WIDTH));
       }
+      console.log(boxDivider(WIDTH));
+      console.log(boxRow('CHANGES SINCE INIT', WIDTH));
+      console.log(boxRow(`  Modified: ${modified} files`, WIDTH));
+      console.log(boxRow(`  Added:    ${added} files`, WIDTH));
+      console.log(boxRow(`  Deleted:  ${deleted} files`, WIDTH));
 
-      if (session.last_query) {
-        const q = session.last_query;
-        const queryDuration = formatDuration(q.timestamp);
-        console.log(`Last query:  ${q.agent} - "${q.question.slice(0, 60)}" (${queryDuration} ago)`);
-      }
-
-      // Show agents if tmux is available
+      // Show agents if tmux available
       if (isTmuxAvailable()) {
         const panes = listPanes();
         const agents = detectAgents(panes);
         if (agents.length > 0) {
-          console.log('');
-          console.log('Active agents:');
+          console.log(boxDivider(WIDTH));
+          console.log(boxRow('AGENTS', WIDTH));
           for (const agent of agents) {
-            const labelStr = agent.label ? `, label: ${agent.label}` : '';
-            console.log(`  ${agent.name} (pane ${agent.pane.pane_id}${labelStr})`);
+            const status = agent.pane.active ? '\u25cf' : '\u25cb';
+            const labelStr = agent.label ? ` (${agent.label})` : '';
+            console.log(boxRow(`  ${status} ${agent.name}${labelStr}  pane ${agent.pane.pane_id}`, WIDTH));
           }
         }
-      } else {
-        console.log('');
-        console.log('(tmux not available - agent detection skipped)');
       }
+
+      // Recent queries
+      const queries = await readQueryLog(workingDir);
+      if (queries.length > 0) {
+        const recent = queries.slice(-3).reverse();
+        console.log(boxDivider(WIDTH));
+        console.log(boxRow('RECENT QUERIES', WIDTH));
+        for (const q of recent) {
+          const ago = formatDuration(q.timestamp);
+          const preview = q.question.length > 35 ? q.question.slice(0, 35) + '...' : q.question;
+          console.log(boxRow(`  -> ${q.agent}: "${preview}" (${ago} ago)`, WIDTH));
+        }
+      }
+
+      console.log(boxBottom(WIDTH));
     });
 }

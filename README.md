@@ -1,6 +1,6 @@
 # handoff
 
-Seamless context transfer between AI coding agents (Claude Code, Codex, Gemini CLI, etc.) when switching due to rate limits or preference.
+Seamless context transfer and workspace management for AI coding agents (Claude Code, Codex, Gemini CLI, etc.).
 
 ## The Problem
 
@@ -17,18 +17,85 @@ When you hit rate limits on one AI agent and switch to another:
 # Install globally
 npm install -g handoff-cli
 
-# 1. Start a session at the beginning of your work
+# Launch a multi-agent workspace (requires tmux)
+handoff start claude codex
+
+# Or use the simple context transfer workflow
 handoff init
-
-# 2. Do your work... when ready to switch agents:
-handoff export --message "Implementing auth middleware, JWT tokens chosen over sessions"
-
-# 3. The new agent reads HANDOFF.md for full context
-# Or query the other agent directly:
-handoff ask codex "Should we use Redis or in-memory for session storage?"
+# ... do your work ...
+handoff export --message "Auth done, need to implement user profile next"
 ```
 
-## Commands
+## Workspace Commands (tmux required)
+
+### `handoff start [agents...]`
+
+Launch a tmux session with agents in a grid layout, plus a control pane.
+
+```bash
+handoff start claude codex              # 2 agents + control pane
+handoff start claude codex gemini       # 3 agents + control pane
+handoff start                           # Just control pane, add agents later
+handoff start claude --session mywork   # Custom session name
+```
+
+The result is a split-pane tmux layout with each agent running in its own labeled pane, and a control pane at the bottom for running `handoff` commands.
+
+### `handoff attach`
+
+Attach to an existing workspace session.
+
+```bash
+handoff attach
+handoff attach --session mywork
+```
+
+### `handoff add <agent>`
+
+Add a new agent pane to the running workspace.
+
+```bash
+handoff add gemini
+```
+
+### `handoff remove <agent>`
+
+Remove an agent pane (sends exit command if configured, then kills pane).
+
+```bash
+handoff remove gemini
+```
+
+### `handoff focus <agent>`
+
+Switch tmux focus to an agent pane.
+
+```bash
+handoff focus claude
+handoff focus codex
+```
+
+### `handoff layout <style>`
+
+Change the workspace pane layout.
+
+```bash
+handoff layout grid        # Even grid (tiled)
+handoff layout horizontal  # All side-by-side
+handoff layout vertical    # All stacked
+handoff layout tiled       # tmux tiled layout
+```
+
+### `handoff kill`
+
+Kill the entire workspace session.
+
+```bash
+handoff kill --force
+handoff kill --force --session mywork
+```
+
+## Context Transfer Commands
 
 ### `handoff init`
 
@@ -39,8 +106,6 @@ handoff init
 handoff init --force          # Re-initialize without confirmation
 handoff init --dir /path/to   # Target a specific directory
 ```
-
-Creates `.handoff/session.json` and `.handoff/snapshots/` in the project root.
 
 ### `handoff export`
 
@@ -54,46 +119,52 @@ handoff export --include-memory       # Include CLAUDE.md / AGENTS.md contents
 handoff export --output custom.md     # Custom output path
 ```
 
-Generates `HANDOFF.md` with session info, file changes, diffs, and optional context.
-
 ### `handoff ask <agent> "<question>"`
 
 Query another agent in a tmux pane without leaving your current session.
 
 ```bash
 handoff ask codex "Should we use JWT or sessions?"
-handoff ask claude "Review the auth changes in the diff" --timeout 30000
-handoff ask gemini "What's the best approach here?" --no-context
+handoff ask claude "Review the auth changes" --timeout 30000
+handoff ask gemini "What's the best approach?" --no-context
 handoff ask --pane %3 "What do you think?"
 ```
 
-Supported agents: `claude`, `codex`, `gemini`, `aider`, `cursor`, `copilot`
+## Pane Management
 
 ### `handoff status`
 
-Show the current session status.
+Show the current session status with box-drawn output.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ HANDOFF STATUS                                                   │
+├─────────────────────────────────────────────────────────────────┤
+│ Session:    abc123-...                                           │
+│ Project:    /path/to/project                                     │
+│ Started:    2h 15m ago                                           │
+│ Workspace:  handoff (3 panes)                                    │
+├─────────────────────────────────────────────────────────────────┤
+│ CHANGES SINCE INIT                                               │
+│   Modified: 3 files                                              │
+│   Added:    1 files                                              │
+│   Deleted:  0 files                                              │
+├─────────────────────────────────────────────────────────────────┤
+│ AGENTS                                                           │
+│   ● claude (claude)  pane %0                                     │
+│   ○ codex  pane %1                                               │
+├─────────────────────────────────────────────────────────────────┤
+│ RECENT QUERIES                                                   │
+│   -> codex: "review auth implementation" (10 min ago)            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### `handoff list`
+
+List all tmux panes with agent detection and box-drawn table.
 
 ```bash
-handoff status
-```
-
-Output:
-```
-Session:     abc123-...
-Started:     2026-03-28T10:00:00Z (2h 15m ago)
-Working Dir: /path/to/project
-Tracking:    47 files
-
-Changes since init:
-  Modified: 3 files
-  Added:    1 files
-  Deleted:  0 files
-
-Last export: 2026-03-28T11:30:00Z (30m ago)
-
-Active agents:
-  claude (pane %0, label: claude-1)
-  codex  (pane %3)
+handoff list
 ```
 
 ### `handoff name <label>`
@@ -105,25 +176,9 @@ handoff name claude
 handoff name codex --pane %3
 ```
 
-### `handoff list`
-
-List all tmux panes with agent detection.
-
-```bash
-handoff list
-```
-
-Output:
-```
-PANE     LABEL            PROCESS          AGENT      STATUS
-%0       claude-1         claude           claude     active
-%3       (none)           codex            codex      idle
-%5       -                zsh              -          -
-```
-
 ## Configuration
 
-Create `.handoff/config.json` in your project (or `~/.handoffrc` for user-level config):
+Create `.handoff/config.json` in your project (or `~/.handoffrc` for user-level):
 
 ```json
 {
@@ -131,30 +186,44 @@ Create `.handoff/config.json` in your project (or `~/.handoffrc` for user-level 
   "max_diff_lines": 50,
   "diff_context_lines": 3,
   "tmux_capture_timeout_ms": 10000,
-  "memory_files": ["CLAUDE.md", "AGENTS.md", ".cursorrules", "GEMINI.md"]
+  "memory_files": ["CLAUDE.md", "AGENTS.md", ".cursorrules", "GEMINI.md"],
+  "agents": {
+    "myagent": {
+      "command": "myagent --interactive",
+      "processName": "myagent",
+      "exitCommand": "quit"
+    }
+  }
 }
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `exclude_patterns` | `["node_modules", ".git", "dist", ...]` | Files/directories to ignore |
-| `max_diff_lines` | `50` | Max lines per diff in HANDOFF.md |
-| `diff_context_lines` | `3` | Context lines around each diff hunk |
-| `tmux_capture_timeout_ms` | `10000` | Timeout waiting for agent responses |
-| `memory_files` | `["CLAUDE.md", "AGENTS.md", ...]` | Agent memory files to include with `--include-memory` |
+## Supported Agents
+
+| Agent | Command | Exit Command |
+|-------|---------|-------------|
+| claude | `claude` | `/exit` |
+| codex | `codex` | - |
+| gemini | `gemini` | - |
+| aider | `aider` | `/exit` |
+| cursor | `cursor` | - |
+| copilot | `gh copilot` | - |
+
+Custom agents can be added via config.
 
 ## Requirements
 
 - **Node.js** >= 20
-- **tmux** - required for `ask`, `list`, `name` commands
+- **tmux** - required for workspace commands (`start`, `add`, `remove`, `focus`, `layout`, `attach`, `kill`, `list`, `name`, `ask`)
   - Linux/macOS: install via your package manager
-  - Windows: install WSL and tmux inside it
+  - Windows: install WSL and tmux inside it (Windows Terminal recommended)
 
 ## How It Works
 
-1. `handoff init` walks your project files, hashes them, and saves copies to `.handoff/snapshots/`
-2. `handoff export` re-hashes files, diffs against snapshots, and generates `HANDOFF.md`
-3. `handoff ask` sends a prompt (with HANDOFF.md context) to another agent's tmux pane and captures the response
+1. `handoff start claude codex` creates a tmux session named `handoff`, splits it into panes (claude, codex, control), labels each, and starts the agent CLIs
+2. From the **control pane**, you can run `handoff ask`, `handoff export`, `handoff status`, etc.
+3. `handoff init` snapshots your project files to `.handoff/snapshots/`
+4. `handoff export` diffs current state vs snapshot and generates `HANDOFF.md`
+5. When switching agents, the new agent reads `HANDOFF.md` for full context
 
 All operations are local - no external API calls, no cloud sync.
 
@@ -165,12 +234,13 @@ your-project/
 ├── HANDOFF.md           # Generated context file for the next agent
 └── .handoff/
     ├── session.json     # Session metadata and file hashes
+    ├── workspace.json   # Workspace state (panes, session name)
     ├── config.json      # Optional project config
     ├── queries.log      # Log of all ask queries
     └── snapshots/       # Copies of files at init time (for diffing)
 ```
 
-Add `.handoff/` to your `.gitignore` - it contains file copies and is project-local.
+Add `.handoff/` to your `.gitignore`.
 
 ## License
 
