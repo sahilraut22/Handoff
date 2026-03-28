@@ -1,13 +1,6 @@
 import { execSync, execFileSync } from 'node:child_process';
 import type { TmuxPane } from '../types/index.js';
 
-function buildTmuxCommand(args: string[]): string {
-  if (process.platform === 'win32') {
-    return `wsl tmux ${args.map((a) => JSON.stringify(a)).join(' ')}`;
-  }
-  return `tmux ${args.map((a) => JSON.stringify(a)).join(' ')}`;
-}
-
 function runTmux(args: string[]): string {
   try {
     if (process.platform === 'win32') {
@@ -26,6 +19,24 @@ function runTmux(args: string[]): string {
       throw new Error('tmux is not installed or not found in PATH.');
     }
     throw new Error(`tmux command failed: ${(err as Error).message}`);
+  }
+}
+
+function runTmuxInteractive(args: string[]): void {
+  try {
+    if (process.platform === 'win32') {
+      execSync(`wsl tmux ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`, {
+        stdio: 'inherit',
+      });
+    } else {
+      execFileSync('tmux', args, { stdio: 'inherit' });
+    }
+  } catch (err) {
+    const error = err as NodeJS.ErrnoException;
+    if (error.code === 'ENOENT') {
+      throw new Error('tmux is not installed or not found in PATH.');
+    }
+    // Interactive commands may exit with non-zero on normal detach, ignore those
   }
 }
 
@@ -53,9 +64,10 @@ function parsePane(line: string): TmuxPane | null {
   };
 }
 
+const PANE_FORMAT = '#{pane_id}|#{pane_title}|#{pane_pid}|#{pane_current_command}|#{window_name}|#{session_name}|#{pane_active}';
+
 export function listPanes(): TmuxPane[] {
-  const format = '#{pane_id}|#{pane_title}|#{pane_pid}|#{pane_current_command}|#{window_name}|#{session_name}|#{pane_active}';
-  const output = runTmux(['list-panes', '-a', '-F', format]);
+  const output = runTmux(['list-panes', '-a', '-F', PANE_FORMAT]);
   return output
     .trim()
     .split('\n')
@@ -66,7 +78,6 @@ export function listPanes(): TmuxPane[] {
 
 export function findPane(identifier: string): TmuxPane | undefined {
   const panes = listPanes();
-  // Match by pane_id, pane_title, or window name
   return panes.find(
     (p) =>
       p.pane_id === identifier ||
@@ -84,7 +95,6 @@ export function setPaneTitle(title: string, paneId?: string): void {
 }
 
 export function sendKeys(paneId: string, text: string): void {
-  // Send the text as a literal string using send-keys with Enter
   runTmux(['send-keys', '-t', paneId, text, 'Enter']);
 }
 
@@ -121,7 +131,6 @@ export async function waitForResponse(
         prevContent = current;
       } else if (current !== baseline) {
         stableCount++;
-        // Stable for 2 consecutive polls means response is complete
         if (stableCount >= 2) {
           clearInterval(interval);
           resolve(current.slice(baseline.length).trim());
@@ -131,4 +140,95 @@ export async function waitForResponse(
   });
 }
 
-export { buildTmuxCommand };
+// --- New workspace management functions ---
+
+export function hasSession(name: string): boolean {
+  try {
+    runTmux(['has-session', '-t', name]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function newSession(name: string, options?: { detached?: boolean; startDir?: string }): string {
+  const args = ['new-session', '-s', name, '-P', '-F', '#{pane_id}'];
+  if (options?.detached !== false) {
+    args.push('-d');
+  }
+  if (options?.startDir) {
+    args.push('-c', options.startDir);
+  }
+  return runTmux(args).trim();
+}
+
+export function splitPane(targetPane: string, options?: { horizontal?: boolean; startDir?: string }): string {
+  const args = ['split-window', '-t', targetPane, '-P', '-F', '#{pane_id}'];
+  if (options?.horizontal) {
+    args.push('-h');
+  }
+  if (options?.startDir) {
+    args.push('-c', options.startDir);
+  }
+  return runTmux(args).trim();
+}
+
+export function killPane(paneId: string): void {
+  runTmux(['kill-pane', '-t', paneId]);
+}
+
+export function killSession(name: string): void {
+  runTmux(['kill-session', '-t', name]);
+}
+
+export function selectPane(paneId: string): void {
+  runTmux(['select-pane', '-t', paneId]);
+}
+
+export function selectLayout(layout: string, targetWindow?: string): void {
+  const args = ['select-layout'];
+  if (targetWindow) {
+    args.push('-t', targetWindow);
+  }
+  args.push(layout);
+  runTmux(args);
+}
+
+export function attachSession(name: string): void {
+  if (process.env.TMUX) {
+    // Already inside tmux - switch client instead of attach
+    runTmux(['switch-client', '-t', name]);
+  } else {
+    runTmuxInteractive(['attach-session', '-t', name]);
+  }
+}
+
+export function getSessionPanes(sessionName: string): TmuxPane[] {
+  try {
+    const output = runTmux(['list-panes', '-s', '-t', sessionName, '-F', PANE_FORMAT]);
+    return output
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map(parsePane)
+      .filter((p): p is TmuxPane => p !== null);
+  } catch {
+    return [];
+  }
+}
+
+export function resizePane(paneId: string, options: { height?: number; width?: number }): void {
+  if (options.height !== undefined) {
+    runTmux(['resize-pane', '-t', paneId, '-y', String(options.height)]);
+  }
+  if (options.width !== undefined) {
+    runTmux(['resize-pane', '-t', paneId, '-x', String(options.width)]);
+  }
+}
+
+export function buildTmuxCommand(args: string[]): string {
+  if (process.platform === 'win32') {
+    return `wsl tmux ${args.map((a) => JSON.stringify(a)).join(' ')}`;
+  }
+  return `tmux ${args.map((a) => JSON.stringify(a)).join(' ')}`;
+}
