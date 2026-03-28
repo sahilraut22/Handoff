@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import type { HandoffConfig } from '../types/index.js';
+import type { HandoffConfig, AgentConfig } from '../types/index.js';
 
 const DEFAULT_CONFIG: HandoffConfig = {
   exclude_patterns: [
@@ -45,6 +45,9 @@ function mergeConfig(base: HandoffConfig, override: Record<string, unknown>): Ha
   }
   if (Array.isArray(override.memory_files)) {
     merged.memory_files = override.memory_files as string[];
+  }
+  if (typeof override.agents === 'object' && override.agents !== null && !Array.isArray(override.agents)) {
+    merged.agents = { ...(base.agents ?? {}), ...(override.agents as Record<string, Partial<AgentConfig>>) };
   }
 
   return merged;

@@ -27,12 +27,34 @@ export interface QueryLogEntry {
   duration_ms?: number;
 }
 
+export interface AgentConfig {
+  name: string;
+  command: string;
+  processName: string;
+  memoryFile?: string;
+  exitCommand?: string;
+}
+
+export interface WorkspacePane {
+  agent_name: string;
+  pane_id: string;
+  label: string;
+}
+
+export interface WorkspaceState {
+  session_name: string;
+  created_at: string;
+  working_dir: string;
+  panes: WorkspacePane[];
+}
+
 export interface HandoffConfig {
   exclude_patterns: string[];
   max_diff_lines: number;
   diff_context_lines: number;
   tmux_capture_timeout_ms: number;
   memory_files: string[];
+  agents?: Record<string, Partial<AgentConfig>>;
 }
 
 export interface TmuxPane {
