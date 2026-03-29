@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { isTmuxAvailable, listPanes, typeText, sendSpecialKey, capturePaneLines, waitForResponse } from '../lib/tmux.js';
+import { isTmuxAvailable, listPanes, typeTextAndSubmit, capturePaneLines, waitForResponse } from '../lib/tmux.js';
 import { findAgent, detectAgents, buildPromptWithContext } from '../lib/agents.js';
 import { appendQueryLog } from '../lib/logger.js';
 import { loadConfig } from '../lib/config.js';
@@ -55,11 +55,10 @@ export function registerAskCommand(program: Command): void {
       // Build prompt
       const prompt = await buildPromptWithContext(question, workingDir, options.context);
 
-      // Send to target pane using typeText + Enter (more precise than sendKeys)
+      // Send text + Enter atomically in one WSL/tmux call to avoid timing gap
       console.log(`Sending to ${agentName} (pane ${targetPaneId})...`);
       const startMs = Date.now();
-      typeText(targetPaneId, prompt);
-      sendSpecialKey(targetPaneId, 'Enter');
+      typeTextAndSubmit(targetPaneId, prompt);
 
       // Wait for response
       console.log(`Waiting for response (timeout: ${timeoutMs}ms)...`);

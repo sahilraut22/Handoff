@@ -4,7 +4,12 @@ import type { TmuxPane } from '../types/index.js';
 function runTmux(args: string[]): string {
   try {
     if (process.platform === 'win32') {
-      return execSync(`wsl tmux ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`, {
+      // Build the command via `wsl bash -c` so that:
+      // 1. We bypass cmd.exe shell interpretation entirely
+      // 2. Each arg is JSON.stringify'd so bash receives them correctly quoted
+      //    (handles #{} format strings, spaces, pipes, special chars)
+      const cmd = ['tmux', ...args].map((a) => JSON.stringify(a)).join(' ');
+      return execFileSync('wsl', ['bash', '-c', cmd], {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -25,9 +30,8 @@ function runTmux(args: string[]): string {
 function runTmuxInteractive(args: string[]): void {
   try {
     if (process.platform === 'win32') {
-      execSync(`wsl tmux ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`, {
-        stdio: 'inherit',
-      });
+      const cmd = ['tmux', ...args].map((a) => JSON.stringify(a)).join(' ');
+      execFileSync('wsl', ['bash', '-c', cmd], { stdio: 'inherit' });
     } else {
       execFileSync('tmux', args, { stdio: 'inherit' });
     }
@@ -42,7 +46,10 @@ function runTmuxInteractive(args: string[]): void {
 
 export function isTmuxAvailable(): boolean {
   try {
-    runTmux(['info']);
+    // `tmux info` exits 1 with "no current client" when called outside an
+    // attached session (always the case on Windows). Use `list-sessions`
+    // instead — it exits 0 if the tmux server is running, 1 only if it isn't.
+    runTmux(['list-sessions']);
     return true;
   } catch {
     return false;
@@ -109,7 +116,7 @@ export function capturePane(paneId: string): string {
 export async function waitForResponse(
   paneId: string,
   timeoutMs: number,
-  pollIntervalMs = 500
+  pollIntervalMs = 200
 ): Promise<string> {
   const baseline = capturePane(paneId);
   const start = Date.now();
@@ -122,16 +129,19 @@ export async function waitForResponse(
 
       if (Date.now() - start >= timeoutMs) {
         clearInterval(interval);
-        resolve(current.slice(baseline.length).trim());
+        resolve(current !== baseline ? current.slice(baseline.length).trim() : current.trim());
         return;
       }
 
       if (current !== prevContent) {
+        // Content changed — reset stable counter and track new content
         stableCount = 0;
         prevContent = current;
       } else if (current !== baseline) {
+        // Content is stable and different from baseline — count consecutive stable polls
         stableCount++;
-        if (stableCount >= 2) {
+        if (stableCount >= 3) {
+          // Stable for 3 polls (600ms) — response is complete
           clearInterval(interval);
           resolve(current.slice(baseline.length).trim());
         }
@@ -249,6 +259,19 @@ export function typeText(paneId: string, text: string): void {
  */
 export function sendSpecialKey(paneId: string, ...keys: string[]): void {
   runTmux(['send-keys', '-t', paneId, ...keys]);
+}
+
+/**
+ * Type literal text AND submit with Enter.
+ * Selects the target pane first so TUI apps (like Codex/ink) have their
+ * input handler active before the Enter keystroke arrives — otherwise
+ * TUI apps in non-active panes ignore the Enter even if text was typed.
+ */
+export function typeTextAndSubmit(paneId: string, text: string): void {
+  // Select the pane so its input handler is active, then type + submit.
+  runTmux(['select-pane', '-t', paneId]);
+  runTmux(['send-keys', '-t', paneId, '-l', '--', text]);
+  runTmux(['send-keys', '-t', paneId, 'Enter']);
 }
 
 /**
