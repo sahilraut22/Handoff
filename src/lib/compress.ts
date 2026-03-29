@@ -1,19 +1,25 @@
 /**
  * Priority-based compression engine for HANDOFF.md context.
- * Classifies changes by importance, compresses diffs to fit within a token budget,
- * and enriches changes with semantic summaries.
+ *
+ * v2.1 improvements:
+ * - Content-aware priority boosting (keywords in diff override path classification)
+ * - Word-based token estimation via tokens.ts
+ * - Query-adaptive relevance scoring (--for <query>)
+ * - Reference-coherent diff compression (preserve lines referencing critical identifiers)
  */
 
 import { computeSemanticDiff, formatSemanticSummary, extractChangedNames } from './semantic.js';
+import { estimateTokens } from './tokens.js';
 import type {
   FileChange,
   CompressedChange,
   ChangePriority,
   CompressionOptions,
   CompressionResult,
+  QueryContext,
 } from '../types/index.js';
 
-// --- Priority classification ---
+// --- Path-based priority ---
 
 const CRITICAL_PATTERNS = [
   /package\.json$/,
@@ -69,37 +75,222 @@ const LOW_PATTERNS = [
   /\.snap$/,
 ];
 
-export function classifyPriority(change: FileChange): ChangePriority {
-  const path = change.path.toLowerCase();
-
-  for (const pattern of CRITICAL_PATTERNS) {
-    if (pattern.test(path)) return 'critical';
-  }
-
-  for (const pattern of LOW_PATTERNS) {
-    if (pattern.test(path)) return 'low';
-  }
-
-  for (const pattern of HIGH_PATTERNS) {
-    if (pattern.test(path)) return 'high';
-  }
-
+function classifyByPath(path: string): ChangePriority {
+  const lower = path.toLowerCase();
+  for (const p of CRITICAL_PATTERNS) if (p.test(lower)) return 'critical';
+  for (const p of LOW_PATTERNS) if (p.test(lower)) return 'low';
+  for (const p of HIGH_PATTERNS) if (p.test(lower)) return 'high';
   return 'medium';
 }
 
-// --- Token estimation ---
+// --- Content-aware boosting ---
 
-export function estimateTokens(text: string): number {
-  // Rough estimate: 1 token per 4 characters
-  return Math.ceil(text.length / 4);
+const CONTENT_BOOST: Array<{ patterns: RegExp[]; boost: number }> = [
+  {
+    boost: 3,
+    patterns: [
+      /\b(BREAKING|SECURITY|CVE-\d+|VULNERABILITY)\b/i,
+      /\b(password|secret|apikey|api_key|private_key|credential)\s*[=:]/i,
+      /\b(DELETE\s+FROM|DROP\s+TABLE|TRUNCATE)\b/i,
+      /rm\s+-rf/,
+    ],
+  },
+  {
+    boost: 2,
+    patterns: [
+      /\b(TODO|FIXME|HACK|XXX|BUG)\b/,
+      /\b(throw new|panic!|fatal|crash)\b/i,
+      /\b(auth|authentication|authorization|permission)\b/i,
+      /\b(encrypt|decrypt|hash|sign|verify)\b/i,
+    ],
+  },
+  {
+    boost: 1,
+    patterns: [
+      /\b(deprecated|warning|caution)\b/i,
+      /\b(config|configuration|settings|options)\b/i,
+    ],
+  },
+];
+
+const PRIORITY_ORDER: Record<ChangePriority, number> = {
+  critical: 3,
+  high: 2,
+  medium: 1,
+  low: 0,
+};
+
+const PRIORITY_BY_INDEX: ChangePriority[] = ['low', 'medium', 'high', 'critical'];
+
+function boostPriority(current: ChangePriority, levels: number): ChangePriority {
+  const idx = Math.min(PRIORITY_ORDER[current] + levels, 3);
+  return PRIORITY_BY_INDEX[idx];
 }
 
-// --- Diff compression ---
+function getContentBoost(diff: string): number {
+  for (const tier of CONTENT_BOOST) {
+    for (const pattern of tier.patterns) {
+      if (pattern.test(diff)) return tier.boost;
+    }
+  }
+  return 0;
+}
 
-/**
- * Smart diff compression: preserves hunk headers and key lines per hunk,
- * elides unimportant middle lines.
- */
+export function classifyPriority(change: FileChange): ChangePriority {
+  let priority = classifyByPath(change.path);
+  if (change.diff) {
+    const boost = getContentBoost(change.diff);
+    if (boost > 0) priority = boostPriority(priority, boost);
+  }
+  return priority;
+}
+
+// --- Query-adaptive relevance ---
+
+const STOP_WORDS = new Set([
+  'the','a','an','is','are','was','were','be','been','being','have','has','had',
+  'do','does','did','will','would','could','should','may','might','must','shall',
+  'can','need','to','of','in','for','on','with','at','by','from','as','into',
+  'this','that','these','those','i','me','my','we','our','you','your','it','its',
+  'and','or','but','if','then','continue','implement','fix','add','update',
+  'change','make','please','help','want','need','working','work','use','used',
+  'using','let','get','set','new','old','also','just','now','here','there',
+]);
+
+export function extractQueryKeywords(query: string): string[] {
+  const words = query
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+
+  // Also extract camelCase / snake_case identifiers from the original query
+  const identifiers = (query.match(/[a-zA-Z][a-zA-Z0-9]*(?:[_][a-zA-Z0-9]+)+|[a-z]+(?:[A-Z][a-z]+)+/g) ?? [])
+    .map((s) => s.toLowerCase());
+
+  return [...new Set([...words, ...identifiers])];
+}
+
+export function scoreQueryRelevance(change: FileChange, keywords: string[]): number {
+  if (keywords.length === 0) return 0;
+  const content = (change.path + ' ' + (change.diff ?? '')).toLowerCase();
+  let score = 0;
+  for (const kw of keywords) {
+    if (content.includes(kw)) {
+      score += 1;
+      if (change.path.toLowerCase().includes(kw)) score += 0.5; // path match bonus
+    }
+  }
+  return Math.min(score / keywords.length, 1);
+}
+
+export function adjustPriorityForQuery(
+  change: FileChange & { priority: ChangePriority },
+  keywords: string[]
+): ChangePriority {
+  const relevance = scoreQueryRelevance(change, keywords);
+  if (relevance >= 0.5) return boostPriority(change.priority, 2);
+  if (relevance >= 0.25) return boostPriority(change.priority, 1);
+  return change.priority;
+}
+
+// --- Identifier extraction for coherent compression ---
+
+export function extractIdentifiers(diff: string): Set<string> {
+  const ids = new Set<string>();
+
+  const patterns = [
+    /(?:function|def|fn|func)\s+(\w+)/g,
+    /(?:class|interface|type|struct|trait|contract)\s+(\w+)/g,
+    /(?:const|let|var|val)\s+(\w+)\s*=/g,
+    /export\s+(?:const|let|var|function|class|interface|type)\s+(\w+)/g,
+  ];
+
+  for (const pattern of patterns) {
+    let match: RegExpExecArray | null;
+    pattern.lastIndex = 0;
+    while ((match = pattern.exec(diff)) !== null) {
+      if (match[1]) ids.add(match[1]);
+    }
+  }
+
+  const noise = new Set(['if','else','for','while','return','const','let','var',
+    'function','class','type','interface','struct','trait','export','import',
+    'async','await','new','this','super','true','false','null','undefined']);
+  for (const n of noise) ids.delete(n);
+
+  return ids;
+}
+
+// --- Reference-coherent diff compression ---
+
+export function compressDiffCoherent(
+  diff: string,
+  maxLines: number,
+  criticalIdentifiers: Set<string>
+): string {
+  const lines = diff.split('\n');
+  if (lines.length <= maxLines) return diff;
+
+  const keep = new Array<boolean>(lines.length).fill(false);
+
+  // Always keep file headers and hunk headers
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('@@') || lines[i].startsWith('---') || lines[i].startsWith('+++')) {
+      keep[i] = true;
+    }
+  }
+
+  // Keep lines with critical identifiers + 1 line context around them
+  for (let i = 0; i < lines.length; i++) {
+    for (const id of criticalIdentifiers) {
+      if (lines[i].includes(id)) {
+        keep[i] = true;
+        if (i > 0) keep[i - 1] = true;
+        if (i < lines.length - 1) keep[i + 1] = true;
+        break;
+      }
+    }
+  }
+
+  // Keep declaration lines
+  const declPattern = /^[+\- ]?\s*(?:export\s+)?(?:async\s+)?(?:function|class|interface|type|const|let|var|def|fn|func|struct|trait|contract)\s+\w+/;
+  for (let i = 0; i < lines.length; i++) {
+    if (declPattern.test(lines[i])) keep[i] = true;
+  }
+
+  // Keep error handling lines
+  const errPattern = /\b(throw|catch|Error|reject|panic|fatal)\b/;
+  for (let i = 0; i < lines.length; i++) {
+    if (errPattern.test(lines[i])) keep[i] = true;
+  }
+
+  // Build output, inserting omission markers for gaps
+  const result: string[] = [];
+  let omitted = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (keep[i]) {
+      if (omitted > 0) {
+        result.push(`  ... (${omitted} lines omitted)`);
+        omitted = 0;
+      }
+      result.push(lines[i]);
+    } else {
+      omitted++;
+    }
+  }
+  if (omitted > 0) result.push(`  ... (${omitted} lines omitted)`);
+
+  if (result.length > maxLines) {
+    return result.slice(0, maxLines - 1).join('\n') + '\n  ... (truncated)';
+  }
+
+  return result.join('\n');
+}
+
+// --- Legacy simple diff compression (used when no identifier context) ---
+
 export function compressDiff(diff: string, targetLines: number): string {
   const lines = diff.split('\n');
   if (lines.length <= targetLines) return diff;
@@ -107,50 +298,42 @@ export function compressDiff(diff: string, targetLines: number): string {
   const result: string[] = [];
   let hunkLines: string[] = [];
   let inHunk = false;
+  const CONTEXT = 2;
 
   function flushHunk() {
     if (hunkLines.length === 0) return;
 
-    const CONTEXT = 2; // context lines to keep around changed lines
-
-    // Find indices of all changed lines (+/-)
     const changedIndices = hunkLines
       .map((l, i) => ({ l, i }))
       .filter(({ l }) => l.startsWith('+') || l.startsWith('-'))
       .map(({ i }) => i);
 
     if (changedIndices.length === 0 || hunkLines.length <= CONTEXT * 2 + changedIndices.length + 3) {
-      // Small hunk or no changes -- output as-is
       result.push(...hunkLines);
       hunkLines = [];
       return;
     }
 
-    // Build a set of line indices to keep: hunk header (index 0) + changed lines + CONTEXT around them
     const keepSet = new Set<number>();
-    keepSet.add(0); // Always keep the @@ header
+    keepSet.add(0); // hunk header
     for (const idx of changedIndices) {
       for (let k = Math.max(0, idx - CONTEXT); k <= Math.min(hunkLines.length - 1, idx + CONTEXT); k++) {
         keepSet.add(k);
       }
     }
 
-    // Output hunk, inserting "... (N lines omitted)" for gaps
     let prevKept = -1;
     for (let i = 0; i < hunkLines.length; i++) {
       if (keepSet.has(i)) {
         if (prevKept !== -1 && i > prevKept + 1) {
-          const omittedCount = i - prevKept - 1;
-          result.push(`... (${omittedCount} lines omitted)`);
+          result.push(`... (${i - prevKept - 1} lines omitted)`);
         }
         result.push(hunkLines[i]);
         prevKept = i;
       }
     }
-    // Trailing omission
     if (prevKept < hunkLines.length - 1) {
-      const remaining = hunkLines.length - 1 - prevKept;
-      result.push(`... (${remaining} lines omitted)`);
+      result.push(`... (${hunkLines.length - 1 - prevKept} lines omitted)`);
     }
 
     hunkLines = [];
@@ -171,25 +354,13 @@ export function compressDiff(diff: string, targetLines: number): string {
       result.push(line);
     }
   }
-
   flushHunk();
 
-  // If still over budget, hard truncate
   if (result.length > targetLines) {
     return result.slice(0, targetLines).join('\n') + `\n... (truncated, ${result.length - targetLines} more lines)`;
   }
-
   return result.join('\n');
 }
-
-// --- Priority ordering ---
-
-const PRIORITY_ORDER: Record<ChangePriority, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-};
 
 // --- Main compression function ---
 
@@ -200,25 +371,30 @@ export function compressChanges(
   const tokenBudget = options.token_budget ?? 8000;
   const priorityThreshold = options.priority_threshold ?? 'low';
   const includeFullDiff = options.include_full_diff ?? false;
+  const queryKeywords = options.query?.keywords ?? [];
 
-  // Step 1: Classify and enrich
+  // Step 1: Classify with content-aware boosting
   const classified: CompressedChange[] = changes.map((change) => {
-    const priority = classifyPriority(change);
+    let priority = classifyPriority(change);
+
+    // Apply query-adaptive boost if keywords provided
+    if (queryKeywords.length > 0) {
+      priority = adjustPriorityForQuery({ ...change, priority }, queryKeywords);
+    }
+
     const functions_changed = change.diff ? extractChangedNames(change.diff, change.path) : [];
 
     let summary: string;
     if (change.isBinary) {
       summary = `Binary file ${change.type}`;
     } else if (change.type === 'deleted') {
-      summary = `File deleted`;
+      summary = 'File deleted';
     } else if (!change.diff) {
       summary = `File ${change.type} (no diff available)`;
     } else {
-      // Generate semantic summary for non-binary text changes
       const linesInfo = change.linesAdded || change.linesRemoved
         ? ` (+${change.linesAdded ?? 0}/-${change.linesRemoved ?? 0} lines)`
         : '';
-
       if (functions_changed.length > 0) {
         summary = `${change.type === 'modified' ? 'Modified' : 'Added'}: ${functions_changed.slice(0, 5).map((n) => `\`${n}\``).join(', ')}${functions_changed.length > 5 ? ` +${functions_changed.length - 5} more` : ''}${linesInfo}`;
       } else {
@@ -236,13 +412,25 @@ export function compressChanges(
 
   // Step 2: Filter by threshold
   const thresholdOrder = PRIORITY_ORDER[priorityThreshold];
-  const eligible = classified.filter((c) => PRIORITY_ORDER[c.priority] <= thresholdOrder);
-  const omitted = classified.filter((c) => PRIORITY_ORDER[c.priority] > thresholdOrder);
+  const eligible = classified.filter((c) => PRIORITY_ORDER[c.priority] >= thresholdOrder);
+  const omitted = classified.filter((c) => PRIORITY_ORDER[c.priority] < thresholdOrder);
 
-  // Step 3: Sort by priority
-  const sorted = [...eligible].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority]);
+  // Step 3: Sort by priority descending
+  const sorted = [...eligible].sort((a, b) => PRIORITY_ORDER[b.priority] - PRIORITY_ORDER[a.priority]);
 
-  // Step 4: Allocate token budget
+  // Step 4: Extract critical identifiers for coherent compression
+  const criticalIdentifiers = new Set<string>();
+  for (const change of sorted) {
+    if (change.priority === 'critical' || change.priority === 'high') {
+      if (change.diff) {
+        for (const id of extractIdentifiers(change.diff)) {
+          criticalIdentifiers.add(id);
+        }
+      }
+    }
+  }
+
+  // Step 5: Allocate token budget by tier
   const budgetAllocation: Record<ChangePriority, number> = {
     critical: Math.floor(tokenBudget * 0.45),
     high: Math.floor(tokenBudget * 0.30),
@@ -259,27 +447,32 @@ export function compressChanges(
 
     if (!change.diff || change.isBinary || change.type === 'deleted' || includeFullDiff) {
       result.push(change);
-      const tokenCost = estimateTokens(change.diff ?? change.summary);
-      budgetUsed[tier] += tokenCost;
+      budgetUsed[tier] += estimateTokens(change.diff ?? change.summary);
       continue;
     }
 
     const fullTokens = estimateTokens(change.diff);
 
     if (fullTokens <= remaining) {
-      // Fits in budget: include full diff
       result.push({ ...change, compressed_diff: change.diff });
       budgetUsed[tier] += fullTokens;
     } else if (remaining > 50) {
-      // Compress to fit remaining budget
+      // Use coherent compression for medium/low (reference-aware),
+      // simple compression for critical/high (preserve more content)
       const targetChars = remaining * 4;
       const targetLines = Math.max(10, Math.floor(targetChars / 80));
-      const compressed = compressDiff(change.diff, targetLines);
-      const compressedTokens = estimateTokens(compressed);
+
+      let compressed: string;
+      if (tier === 'medium' || tier === 'low') {
+        compressed = compressDiffCoherent(change.diff, targetLines, criticalIdentifiers);
+      } else {
+        compressed = compressDiff(change.diff, targetLines);
+      }
+
       result.push({ ...change, compressed_diff: compressed });
-      budgetUsed[tier] += compressedTokens;
+      budgetUsed[tier] += estimateTokens(compressed);
     } else {
-      // No budget left in this tier: include summary only (no diff)
+      // Over budget: include summary only
       result.push({ ...change, compressed_diff: undefined });
     }
   }

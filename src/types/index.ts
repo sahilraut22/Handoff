@@ -68,10 +68,41 @@ export interface CompressedChange extends FileChange {
   compressed_diff?: string;
 }
 
+export interface QueryContext {
+  query: string;
+  keywords: string[];
+}
+
 export interface CompressionOptions {
   token_budget?: number;
   priority_threshold?: ChangePriority;
   include_full_diff?: boolean;
+  query?: QueryContext;
+}
+
+// --- Agent state / delta types ---
+
+export interface AgentKnowledge {
+  lastHandoff: string;
+  knownDecisions: string[];
+  knownFileHashes: Record<string, string>;
+  knownContext: {
+    headline?: string;
+    criticalBlockers?: string[];
+    constraints?: string[];
+  };
+}
+
+export interface AgentStateStore {
+  version: '1.0';
+  agents: Record<string, AgentKnowledge>;
+}
+
+export interface DeltaResult {
+  newChanges: FileChange[];
+  newDecisions: string[];
+  unchangedCount: number;
+  isFullHandoff: boolean;
 }
 
 export interface CompressionResult {
@@ -174,4 +205,9 @@ export interface HandoffContext {
   config: HandoffConfig;
   compression_result?: CompressionResult;
   decisions?: Decision[];
+  delta?: {
+    isDelta: boolean;
+    unchangedCount: number;
+    targetAgent?: string;
+  };
 }

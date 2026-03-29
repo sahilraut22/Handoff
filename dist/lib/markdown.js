@@ -194,6 +194,15 @@ export function generateHandoffMarkdown(context) {
     parts.push(buildFrontmatter(context, duration));
     parts.push('');
     parts.push('# Handoff Context\n');
+    // Delta export notice
+    if (context.delta?.isDelta) {
+        const { unchangedCount, targetAgent } = context.delta;
+        parts.push(`> **Delta Handoff** for \`${targetAgent}\`: only changes since your last handoff are included.`);
+        if (unchangedCount > 0) {
+            parts.push(`> ${unchangedCount} unchanged file${unchangedCount !== 1 ? 's' : ''} omitted.`);
+        }
+        parts.push('');
+    }
     // Session info
     parts.push('## Session Info');
     parts.push(`- **Session ID**: ${session.session_id}`);

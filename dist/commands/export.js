@@ -3,9 +3,10 @@ import { join, resolve } from 'node:path';
 import { loadConfig } from '../lib/config.js';
 import { walkFiles, hashAllFiles, computeChanges } from '../lib/snapshot.js';
 import { generateHandoffMarkdown } from '../lib/markdown.js';
-import { compressChanges } from '../lib/compress.js';
+import { compressChanges, extractQueryKeywords } from '../lib/compress.js';
 import { loadAllDecisions } from '../lib/decisions.js';
 import { generateInteropOutput } from '../lib/interop.js';
+import { loadAgentState, saveAgentState, getAgentKnowledge, updateAgentKnowledge, computeDelta, } from '../lib/agent-state.js';
 export function registerExportCommand(program) {
     program
         .command('export')
@@ -16,6 +17,8 @@ export function registerExportCommand(program) {
         .option('--include-decisions', 'Include accepted decisions in output')
         .option('--compress', 'Enable intelligent compression with token budgeting')
         .option('--token-budget <n>', 'Token budget for compression (default: 8000)', '8000')
+        .option('--to <agent>', 'Target agent for delta export (only sends context new since last handoff to that agent)')
+        .option('--for <query>', 'Task description to optimize context relevance (boosts query-relevant files)')
         .option('--format <fmt>', 'Output format: markdown (default), json, claude, agents')
         .option('-o, --output <path>', 'Custom output path (default: HANDOFF.md in project root)')
         .option('-d, --dir <path>', 'Target directory (default: current directory)')
@@ -45,7 +48,7 @@ export function registerExportCommand(program) {
         console.log('Scanning for changes...');
         const currentFiles = await walkFiles(workingDir, config.exclude_patterns);
         const currentHashes = await hashAllFiles(workingDir, currentFiles);
-        // Compute changes
+        // Compute all changes since init
         let changes = await computeChanges(workingDir, snapshotDir, session.file_hashes, currentHashes, config);
         // Strip diffs if --no-diff
         if (!options.diff) {
@@ -53,7 +56,38 @@ export function registerExportCommand(program) {
                 delete change.diff;
             }
         }
-        // Load memory files if requested
+        // Load decisions
+        let allDecisions = options.includeDecisions
+            ? (await loadAllDecisions(workingDir)).filter((d) => d.status === 'accepted' || d.status === 'proposed')
+            : undefined;
+        // Delta encoding: filter to only what's new for the target agent
+        let deltaInfo;
+        if (options.to) {
+            const agentState = await loadAgentState(handoffDir);
+            const agentKnowledge = getAgentKnowledge(agentState, options.to);
+            const allDecisionIds = allDecisions?.map((d) => d.id) ?? [];
+            const delta = computeDelta(changes, allDecisionIds, agentKnowledge);
+            if (!delta.isFullHandoff) {
+                console.log(`Delta for ${options.to}: ${delta.newChanges.length} new changes` +
+                    (delta.unchangedCount > 0 ? `, ${delta.unchangedCount} unchanged (skipped)` : '') +
+                    (delta.newDecisions.length > 0 ? `, ${delta.newDecisions.length} new decisions` : ''));
+            }
+            changes = delta.newChanges;
+            if (allDecisions) {
+                const newDecisionSet = new Set(delta.newDecisions);
+                allDecisions = allDecisions.filter((d) => newDecisionSet.has(d.id));
+            }
+            deltaInfo = {
+                isDelta: !delta.isFullHandoff,
+                unchangedCount: delta.unchangedCount,
+                targetAgent: options.to,
+            };
+            // After successful export, update agent state
+            const allDecisionIds2 = allDecisions?.map((d) => d.id) ?? [];
+            updateAgentKnowledge(agentState, options.to, changes, allDecisionIds2, {});
+            await saveAgentState(handoffDir, agentState);
+        }
+        // Load memory files
         let memoryContents;
         if (options.includeMemory) {
             memoryContents = {};
@@ -66,24 +100,23 @@ export function registerExportCommand(program) {
                     // Memory file doesn't exist, skip
                 }
             }
-            if (Object.keys(memoryContents).length === 0) {
+            if (Object.keys(memoryContents).length === 0)
                 memoryContents = undefined;
-            }
         }
-        // Load decisions if requested
-        let decisions = undefined;
-        if (options.includeDecisions) {
-            const allDecisions = await loadAllDecisions(workingDir);
-            decisions = allDecisions.filter((d) => d.status === 'accepted' || d.status === 'proposed');
-        }
-        // Run compression if requested
+        // Run compression
         let compressionResult = undefined;
-        if (options.compress) {
-            const tokenBudget = parseInt(options.tokenBudget, 10) || 8000;
+        if (options.compress || config.compression?.enabled) {
+            const tokenBudget = parseInt(options.tokenBudget, 10) || config.compression?.token_budget || 8000;
             const compressionConfig = config.compression ?? {};
+            // Build query context if --for was provided
+            const queryKeywords = options.for ? extractQueryKeywords(options.for) : [];
+            if (queryKeywords.length > 0) {
+                console.log(`Query keywords: ${queryKeywords.join(', ')}`);
+            }
             compressionResult = compressChanges(changes, {
                 token_budget: tokenBudget,
                 priority_threshold: compressionConfig.priority_threshold ?? 'low',
+                query: queryKeywords.length > 0 ? { query: options.for, keywords: queryKeywords } : undefined,
             });
             changes = compressionResult.changes;
             console.log(`Compressed: ${compressionResult.stats.total_changes} changes -> ${compressionResult.stats.included_changes} shown` +
@@ -98,9 +131,10 @@ export function registerExportCommand(program) {
             memory_contents: memoryContents,
             config,
             compression_result: compressionResult,
-            decisions,
+            decisions: allDecisions,
+            delta: deltaInfo,
         };
-        // Generate output in requested format
+        // Generate output
         let output;
         let defaultFilename = 'HANDOFF.md';
         if (outputFormat === 'json') {
@@ -120,7 +154,7 @@ export function registerExportCommand(program) {
         }
         const outputPath = options.output ?? join(workingDir, defaultFilename);
         await writeFile(outputPath, output, 'utf-8');
-        // Update session with last export time
+        // Update session
         session.last_export = new Date().toISOString();
         await writeFile(join(handoffDir, 'session.json'), JSON.stringify(session, null, 2), 'utf-8');
         // Print summary
@@ -129,8 +163,8 @@ export function registerExportCommand(program) {
         const deleted = changes.filter((c) => c.type === 'deleted').length;
         console.log(`\nExported to ${outputPath}`);
         console.log(`Changes: ${modified} modified, ${added} added, ${deleted} deleted`);
-        if (decisions && decisions.length > 0) {
-            console.log(`Decisions: ${decisions.length} included`);
+        if (allDecisions && allDecisions.length > 0) {
+            console.log(`Decisions: ${allDecisions.length} included`);
         }
     });
 }

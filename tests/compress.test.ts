@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { classifyPriority, estimateTokens, compressDiff, compressChanges } from '../src/lib/compress.js';
+import { classifyPriority, compressDiff, compressChanges } from '../src/lib/compress.js';
+import { estimateTokens } from '../src/lib/tokens.js';
 import type { FileChange } from '../src/types/index.js';
 
 function makeChange(path: string, overrides: Partial<FileChange> = {}): FileChange {
