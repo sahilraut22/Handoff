@@ -48,6 +48,15 @@ export interface WorkspaceState {
   panes: WorkspacePane[];
 }
 
+export interface TmuxConfig {
+  mouse: boolean;
+  scrollback: number;
+  keybindings: boolean;
+  clipboard: boolean;
+  paneLabels: boolean;
+  heavyBorders: boolean;
+}
+
 export interface HandoffConfig {
   exclude_patterns: string[];
   max_diff_lines: number;
@@ -55,6 +64,7 @@ export interface HandoffConfig {
   tmux_capture_timeout_ms: number;
   memory_files: string[];
   agents?: Record<string, Partial<AgentConfig>>;
+  tmux?: Partial<TmuxConfig>;
 }
 
 export interface TmuxPane {
