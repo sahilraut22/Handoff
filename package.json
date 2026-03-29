@@ -9,8 +9,7 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE",
-    "CLAUDE.md"
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
