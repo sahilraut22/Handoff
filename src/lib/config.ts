@@ -17,6 +17,12 @@ const DEFAULT_CONFIG: HandoffConfig = {
   diff_context_lines: 3,
   tmux_capture_timeout_ms: 10000,
   memory_files: ['CLAUDE.md', 'AGENTS.md', '.cursorrules', 'GEMINI.md'],
+  compression: {
+    enabled: false,
+    token_budget: 8000,
+    priority_threshold: 'low',
+    semantic_analysis: true,
+  },
 };
 
 async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
@@ -48,6 +54,10 @@ function mergeConfig(base: HandoffConfig, override: Record<string, unknown>): Ha
   }
   if (typeof override.agents === 'object' && override.agents !== null && !Array.isArray(override.agents)) {
     merged.agents = { ...(base.agents ?? {}), ...(override.agents as Record<string, Partial<AgentConfig>>) };
+  }
+
+  if (typeof override.compression === 'object' && override.compression !== null && !Array.isArray(override.compression)) {
+    merged.compression = { ...(base.compression ?? {}), ...(override.compression as Record<string, unknown>) } as HandoffConfig['compression'];
   }
 
   return merged;

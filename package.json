@@ -1,11 +1,17 @@
 {
   "name": "handoff-cli",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "type": "module",
-  "description": "Seamless context transfer between AI coding agents",
+  "description": "Seamless context transfer, decision journaling, and workspace management for AI coding agents",
   "bin": {
     "handoff": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CLAUDE.md"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -14,6 +20,18 @@
     "test:watch": "vitest",
     "start": "node dist/index.js"
   },
+  "keywords": [
+    "ai",
+    "agents",
+    "context-transfer",
+    "handoff",
+    "claude",
+    "codex",
+    "tmux",
+    "multi-agent",
+    "decision-journal",
+    "workspace"
+  ],
   "dependencies": {
     "commander": "^14.0.0",
     "diff": "^8.0.0",
@@ -32,5 +50,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/sahilraut22/Handoff.git"
+  },
+  "homepage": "https://github.com/sahilraut22/Handoff#readme",
+  "bugs": {
+    "url": "https://github.com/sahilraut22/Handoff/issues"
   }
 }

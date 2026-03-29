@@ -1,4 +1,5 @@
-import type { HandoffContext, FileChange } from '../types/index.js';
+import type { HandoffContext, FileChange, CompressedChange, Decision, HandoffFrontmatter } from '../types/index.js';
+import { formatDecisionMarkdown } from './decisions.js';
 
 function formatDuration(startIso: string): string {
   const startMs = new Date(startIso).getTime();
@@ -74,6 +75,52 @@ function renderDiffs(changes: FileChange[], maxLines: number): string {
   return sections.join('\n\n');
 }
 
+function renderCompressedChanges(changes: CompressedChange[], maxLines: number): string {
+  if (changes.length === 0) return '';
+
+  const sections: string[] = [];
+  const byPriority: Record<string, CompressedChange[]> = {};
+
+  for (const change of changes) {
+    if (!byPriority[change.priority]) byPriority[change.priority] = [];
+    byPriority[change.priority].push(change);
+  }
+
+  const priorityOrder = ['critical', 'high', 'medium', 'low'] as const;
+  const priorityLabels: Record<string, string> = {
+    critical: 'Critical Changes',
+    high: 'High Priority',
+    medium: 'Notable Changes',
+    low: 'Minor Changes',
+  };
+
+  for (const priority of priorityOrder) {
+    const group = byPriority[priority];
+    if (!group || group.length === 0) continue;
+
+    sections.push(`### ${priorityLabels[priority]}\n`);
+
+    for (const change of group) {
+      const typeIcon = change.type === 'modified' ? 'M' : change.type === 'added' ? 'A' : 'D';
+      let entry = `**[${typeIcon}] \`${change.path}\`** -- ${change.summary}`;
+      if (change.functions_changed && change.functions_changed.length > 0) {
+        entry += `\n> Functions: ${change.functions_changed.slice(0, 8).map((n) => `\`${n}\``).join(', ')}`;
+      }
+      sections.push(entry);
+
+      // Show compressed diff if available
+      const diffToShow = change.compressed_diff ?? change.diff;
+      if (diffToShow && !change.isBinary) {
+        const compressed = truncateDiff(diffToShow, maxLines);
+        sections.push(`\`\`\`diff\n${compressed}\n\`\`\``);
+      }
+    }
+    sections.push('');
+  }
+
+  return sections.join('\n');
+}
+
 function renderMemory(memoryContents: Record<string, string>): string {
   const sections: string[] = [];
   for (const [file, content] of Object.entries(memoryContents)) {
@@ -82,12 +129,101 @@ function renderMemory(memoryContents: Record<string, string>): string {
   return sections.join('\n\n');
 }
 
+function renderDecisions(decisions: Decision[]): string {
+  if (decisions.length === 0) return '';
+  const sections = decisions.map((d) => formatDecisionMarkdown(d));
+  return sections.join('\n\n---\n\n');
+}
+
+function buildFrontmatter(context: HandoffContext, duration: string): string {
+  const { session, changes, compression_result, decisions } = context;
+
+  const modified = changes.filter((c) => c.type === 'modified').length;
+  const added = changes.filter((c) => c.type === 'added').length;
+  const deleted = changes.filter((c) => c.type === 'deleted').length;
+
+  const fm: HandoffFrontmatter = {
+    handoff_version: '2.0',
+    session_id: session.session_id,
+    created_at: session.created_at,
+    duration,
+    working_dir: session.working_dir,
+    ...(session.agent_name && { agent: session.agent_name }),
+    changes: { modified, added, deleted },
+  };
+
+  if (compression_result) {
+    fm.compression = {
+      enabled: true,
+      token_budget: 0, // filled below
+      tokens_used: compression_result.stats.estimated_tokens,
+    };
+    // Recover budget from stats
+    if (compression_result.stats.budget_used_pct > 0) {
+      fm.compression.token_budget = Math.round(
+        compression_result.stats.estimated_tokens / (compression_result.stats.budget_used_pct / 100)
+      );
+    }
+  }
+
+  // Identify priority files (critical/high that have diffs)
+  if (compression_result) {
+    fm.priority_files = compression_result.changes
+      .filter((c) => (c as CompressedChange).priority === 'critical' || (c as CompressedChange).priority === 'high')
+      .map((c) => c.path)
+      .slice(0, 10);
+  }
+
+  if (decisions && decisions.length > 0) {
+    fm.decisions_included = decisions.length;
+  }
+
+  // Serialize frontmatter as YAML
+  const lines: string[] = ['---'];
+  lines.push(`handoff_version: "${fm.handoff_version}"`);
+  lines.push(`session_id: "${fm.session_id}"`);
+  lines.push(`created_at: "${fm.created_at}"`);
+  lines.push(`duration: "${fm.duration}"`);
+  lines.push(`working_dir: "${fm.working_dir.replace(/\\/g, '/')}"`);
+  if (fm.agent) lines.push(`agent: "${fm.agent}"`);
+
+  lines.push('changes:');
+  lines.push(`  modified: ${fm.changes.modified}`);
+  lines.push(`  added: ${fm.changes.added}`);
+  lines.push(`  deleted: ${fm.changes.deleted}`);
+
+  if (fm.compression) {
+    lines.push('compression:');
+    lines.push(`  enabled: true`);
+    lines.push(`  token_budget: ${fm.compression.token_budget}`);
+    lines.push(`  tokens_used: ${fm.compression.tokens_used}`);
+  }
+
+  if (fm.priority_files && fm.priority_files.length > 0) {
+    lines.push('priority_files:');
+    for (const f of fm.priority_files) {
+      lines.push(`  - "${f}"`);
+    }
+  }
+
+  if (fm.decisions_included !== undefined) {
+    lines.push(`decisions_included: ${fm.decisions_included}`);
+  }
+
+  lines.push('---');
+  return lines.join('\n');
+}
+
 export function generateHandoffMarkdown(context: HandoffContext): string {
-  const { session, changes, message, include_memory, memory_contents, config } = context;
+  const { session, changes, message, include_memory, memory_contents, config, compression_result, decisions } = context;
   const duration = formatDuration(session.created_at);
   const now = new Date().toISOString();
 
   const parts: string[] = [];
+
+  // YAML frontmatter
+  parts.push(buildFrontmatter(context, duration));
+  parts.push('');
 
   parts.push('# Handoff Context\n');
 
@@ -116,6 +252,15 @@ export function generateHandoffMarkdown(context: HandoffContext): string {
 
   if (changes.length === 0) {
     parts.push('No changes detected since session start.\n');
+  } else if (compression_result) {
+    // Compressed rendering
+    const compressed = renderCompressedChanges(compression_result.changes as CompressedChange[], config.max_diff_lines);
+    if (compressed) {
+      parts.push(compressed);
+    }
+    // Compression stats footer
+    parts.push(`> *Compression: ${compression_result.stats.total_changes} total changes, ${compression_result.stats.included_changes} shown (~${compression_result.stats.estimated_tokens.toLocaleString()} tokens, ${compression_result.stats.budget_used_pct}% of budget used)*`);
+    parts.push('');
   } else {
     const modified = changes.filter((c) => c.type === 'modified');
     const added = changes.filter((c) => c.type === 'added');
@@ -137,11 +282,20 @@ export function generateHandoffMarkdown(context: HandoffContext): string {
     }
   }
 
-  // Full diffs
-  const diffSection = renderDiffs(changes, config.max_diff_lines);
-  if (diffSection) {
-    parts.push('## Full Diffs\n');
-    parts.push(diffSection);
+  // Full diffs (non-compressed path only)
+  if (!compression_result) {
+    const diffSection = renderDiffs(changes, config.max_diff_lines);
+    if (diffSection) {
+      parts.push('## Full Diffs\n');
+      parts.push(diffSection);
+      parts.push('');
+    }
+  }
+
+  // Decisions
+  if (decisions && decisions.length > 0) {
+    parts.push('## Architectural Decisions\n');
+    parts.push(renderDecisions(decisions));
     parts.push('');
   }
 

@@ -57,6 +57,87 @@ export interface TmuxConfig {
   heavyBorders: boolean;
 }
 
+// --- Compression types ---
+
+export type ChangePriority = 'critical' | 'high' | 'medium' | 'low';
+
+export interface CompressedChange extends FileChange {
+  priority: ChangePriority;
+  summary: string;
+  functions_changed?: string[];
+  compressed_diff?: string;
+}
+
+export interface CompressionOptions {
+  token_budget?: number;
+  priority_threshold?: ChangePriority;
+  include_full_diff?: boolean;
+}
+
+export interface CompressionResult {
+  changes: CompressedChange[];
+  stats: {
+    total_changes: number;
+    included_changes: number;
+    omitted_changes: number;
+    estimated_tokens: number;
+    budget_used_pct: number;
+  };
+}
+
+export interface CompressionConfig {
+  enabled: boolean;
+  token_budget: number;
+  priority_threshold: ChangePriority;
+  semantic_analysis: boolean;
+}
+
+// --- Decision journal types ---
+
+export type DecisionStatus = 'accepted' | 'proposed' | 'superseded' | 'deprecated';
+
+export interface Decision {
+  id: string;
+  title: string;
+  status: DecisionStatus;
+  date: string;
+  context: string;
+  decision: string;
+  alternatives?: string[];
+  consequences?: string;
+  tags?: string[];
+  supersedes?: string;
+  agent?: string;
+}
+
+// --- Protocol / frontmatter types ---
+
+export interface HandoffFrontmatter {
+  handoff_version: string;
+  session_id: string;
+  created_at: string;
+  duration: string;
+  working_dir: string;
+  agent?: string;
+  changes: { modified: number; added: number; deleted: number };
+  compression?: { enabled: boolean; token_budget: number; tokens_used: number };
+  priority_files?: string[];
+  decisions_included?: number;
+}
+
+export interface ValidationError {
+  field: string;
+  message: string;
+  severity: 'error' | 'warning';
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+}
+
+// --- Main config ---
+
 export interface HandoffConfig {
   exclude_patterns: string[];
   max_diff_lines: number;
@@ -65,6 +146,7 @@ export interface HandoffConfig {
   memory_files: string[];
   agents?: Record<string, Partial<AgentConfig>>;
   tmux?: Partial<TmuxConfig>;
+  compression?: Partial<CompressionConfig>;
 }
 
 export interface TmuxPane {
@@ -90,4 +172,6 @@ export interface HandoffContext {
   include_memory: boolean;
   memory_contents?: Record<string, string>;
   config: HandoffConfig;
+  compression_result?: CompressionResult;
+  decisions?: Decision[];
 }
