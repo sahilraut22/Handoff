@@ -15,6 +15,7 @@ import { registerLayoutCommand } from './commands/layout.js';
 import { registerAttachCommand } from './commands/attach.js';
 import { registerKillCommand } from './commands/kill.js';
 import { registerBridgeCommand } from './commands/bridge.js';
+import { registerSetupCommand } from './commands/setup.js';
 
 const program = new Command();
 
@@ -44,5 +45,8 @@ registerStatusCommand(program);
 
 // Agent-to-agent IPC bridge
 registerBridgeCommand(program);
+
+// Setup / diagnostics
+registerSetupCommand(program);
 
 program.parse();

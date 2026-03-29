@@ -14,6 +14,7 @@ import {
   resizePane,
   setPaneTitle,
   sendKeys,
+  sourceConfig,
 } from './tmux.js';
 import { getAgentConfig } from './agents.js';
 
@@ -54,7 +55,7 @@ export async function createWorkspace(
   agents: string[],
   workingDir: string,
   config: HandoffConfig,
-  options?: { sessionName?: string }
+  options?: { sessionName?: string; tmuxConfigPath?: string }
 ): Promise<void> {
   const sessionName = options?.sessionName ?? DEFAULT_SESSION_NAME;
 
@@ -64,6 +65,11 @@ export async function createWorkspace(
 
   // Create detached session, capture first pane ID
   const firstPaneId = newSession(sessionName, { detached: true, startDir: workingDir });
+
+  // Load tmux config into the running server
+  if (options?.tmuxConfigPath) {
+    sourceConfig(options.tmuxConfigPath);
+  }
 
   const state: WorkspaceState = {
     session_name: sessionName,

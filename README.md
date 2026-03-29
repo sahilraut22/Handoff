@@ -2,67 +2,170 @@
 
 Seamless context transfer and workspace management for AI coding agents (Claude Code, Codex, Gemini CLI, etc.).
 
-## The Problem
+## How It Works
 
-When you hit rate limits on one AI agent and switch to another:
-- Context is lost - the new agent doesn't know what was done
-- Decisions aren't transferred - architectural choices, rejected approaches
-- Re-explanation takes 5-10 minutes each time
+`handoff` has two core capabilities that work together:
 
-`handoff` fixes this with a single command.
+- **Context transfer** (`init`/`export`/`HANDOFF.md`) -- memory sharing between agents
+- **Bridge** (`bridge spawn`/`message`/`read`) -- communication channel between agents
+
+**Agents are the users of handoff.** The human prompts their preferred agent, and the agent uses handoff commands as bash tools:
+
+```bash
+# User tells Claude: "set up codex to help with this project"
+# Claude runs:
+handoff init                                     # snapshot project files
+handoff export --message "Auth done, JWT chosen" # generate HANDOFF.md
+handoff bridge spawn codex                       # open codex side-by-side
+handoff bridge read codex 20                     # check codex is ready
+handoff bridge message codex "Read HANDOFF.md for full context, then implement user profiles"
+# ...later...
+handoff bridge read codex 50                     # read codex's progress
+```
 
 ## Quick Start
 
 ```bash
-# Install globally
+# Install
 npm install -g handoff-cli
 
-# Launch a multi-agent workspace (requires tmux)
+# One-time setup (keyboard shortcuts + mouse support)
+handoff setup
+
+# Launch workspace with agents
 handoff start claude codex
 
-# Or use the simple context transfer workflow
-handoff init
-# ... do your work ...
-handoff export --message "Auth done, need to implement user profile next"
+# Or: start with just Claude, spawn codex from within Claude
+handoff start claude
+# Then ask Claude: "spawn codex side by side"
+# Claude runs: handoff bridge spawn codex
 ```
 
-## Workspace Commands (tmux required)
+## Setup
+
+```bash
+handoff setup
+```
+
+Installs the tmux config at `~/.handoff/tmux.conf` with mouse support, pane labels, and keyboard shortcuts. Prints diagnostics and a keyboard shortcut cheatsheet.
+
+Options: `--no-keybindings`, `--no-clipboard`, `--no-pane-labels`
+
+## Bridge Commands (Agent-to-Agent IPC)
+
+These commands are designed to be called by agents (Claude, Codex, etc.) from within their terminal sessions.
+
+### `handoff bridge spawn <agent>`
+
+Open an agent in a new pane adjacent to the current pane.
+
+```bash
+handoff bridge spawn codex          # side-by-side (default)
+handoff bridge spawn gemini --vertical  # stacked
+```
+
+### `handoff bridge read <target> [lines]`
+
+Read the last N lines from a pane (default: 50). Records a read for the guard system.
+
+```bash
+handoff bridge read codex 50
+handoff bridge read %3 20
+handoff bridge read claude
+```
+
+### `handoff bridge message <target> <text>`
+
+Send a message to another agent with auto-prepended `[from: <sender>]` metadata.
+
+```bash
+handoff bridge message codex "Review the auth middleware in src/auth.ts"
+handoff bridge message gemini "What's the best approach for caching here?"
+```
+
+### `handoff bridge type <target> <text>`
+
+Type literal text into a pane WITHOUT pressing Enter. Use `bridge keys` to send Enter.
+
+```bash
+handoff bridge type codex "ls -la"
+handoff bridge keys codex Enter
+```
+
+### `handoff bridge keys <target> <key...>`
+
+Send special key(s) to a pane.
+
+```bash
+handoff bridge keys codex Enter
+handoff bridge keys codex Escape
+handoff bridge keys codex Ctrl+C
+handoff bridge keys codex Up Up Enter
+```
+
+Supported keys: `Enter`, `Escape`, `Tab`, `Space`, `Backspace`, `Delete`, `Up`, `Down`, `Left`, `Right`, `Home`, `End`, `PageUp`, `PageDown`, `Ctrl+C`, `Ctrl+D`, `Ctrl+Z`, `Ctrl+A`, `Ctrl+L`, `Ctrl+R`
+
+### `handoff bridge list`
+
+List all panes in the current session.
+
+```bash
+handoff bridge list            # pipe-delimited (machine-readable)
+handoff bridge list --pretty   # formatted table
+```
+
+### `handoff bridge id`
+
+Print the current pane's ID and label.
+
+### `handoff bridge resolve <label>`
+
+Resolve a label to a pane ID.
+
+```bash
+handoff bridge resolve codex   # prints: %1
+```
+
+### `handoff bridge name <target> <label>`
+
+Assign a label to a pane.
+
+```bash
+handoff bridge name %3 codex
+```
+
+### `handoff bridge doctor`
+
+Diagnose tmux connectivity and bridge health.
+
+## Workspace Commands
 
 ### `handoff start [agents...]`
 
-Launch a tmux session with agents in a grid layout, plus a control pane.
+Launch a tmux workspace with agents in a grid layout. Automatically installs keyboard config.
 
 ```bash
 handoff start claude codex              # 2 agents + control pane
 handoff start claude codex gemini       # 3 agents + control pane
-handoff start                           # Just control pane, add agents later
-handoff start claude --session mywork   # Custom session name
+handoff start                           # just control pane
+handoff start claude --session mywork   # custom session name
 ```
-
-The result is a split-pane tmux layout with each agent running in its own labeled pane, and a control pane at the bottom for running `handoff` commands.
 
 ### `handoff attach`
 
-Attach to an existing workspace session.
+Attach to an existing workspace.
 
 ```bash
 handoff attach
 handoff attach --session mywork
 ```
 
-### `handoff add <agent>`
+### `handoff add <agent>` / `handoff remove <agent>`
 
-Add a new agent pane to the running workspace.
+Dynamically add or remove agent panes.
 
 ```bash
 handoff add gemini
-```
-
-### `handoff remove <agent>`
-
-Remove an agent pane (sends exit command if configured, then kills pane).
-
-```bash
 handoff remove gemini
 ```
 
@@ -77,104 +180,86 @@ handoff focus codex
 
 ### `handoff layout <style>`
 
-Change the workspace pane layout.
-
-```bash
-handoff layout grid        # Even grid (tiled)
-handoff layout horizontal  # All side-by-side
-handoff layout vertical    # All stacked
-handoff layout tiled       # tmux tiled layout
-```
+Change workspace layout: `grid`, `horizontal`, `vertical`, `tiled`.
 
 ### `handoff kill`
 
-Kill the entire workspace session.
+Kill the workspace session.
 
 ```bash
 handoff kill --force
-handoff kill --force --session mywork
 ```
 
 ## Context Transfer Commands
 
 ### `handoff init`
 
-Initialize a session. Creates a baseline snapshot for change detection.
+Snapshot all project files for change detection.
 
 ```bash
 handoff init
-handoff init --force          # Re-initialize without confirmation
-handoff init --dir /path/to   # Target a specific directory
+handoff init --force   # re-initialize
 ```
 
 ### `handoff export`
 
-Export current session context to `HANDOFF.md`.
+Export changes as `HANDOFF.md` for the next agent.
 
 ```bash
 handoff export
 handoff export --message "Summary of what was done"
-handoff export --no-diff              # Only list files, no diffs
-handoff export --include-memory       # Include CLAUDE.md / AGENTS.md contents
-handoff export --output custom.md     # Custom output path
+handoff export --no-diff          # file list only
+handoff export --include-memory   # include CLAUDE.md, AGENTS.md
 ```
 
 ### `handoff ask <agent> "<question>"`
 
-Query another agent in a tmux pane without leaving your current session.
+Ask another agent a question and wait for the response.
 
 ```bash
-handoff ask codex "Should we use JWT or sessions?"
+handoff ask codex "Should we use Redis or in-memory caching?"
 handoff ask claude "Review the auth changes" --timeout 30000
 handoff ask gemini "What's the best approach?" --no-context
-handoff ask --pane %3 "What do you think?"
 ```
-
-## Pane Management
 
 ### `handoff status`
 
-Show the current session status with box-drawn output.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ HANDOFF STATUS                                                   │
-├─────────────────────────────────────────────────────────────────┤
-│ Session:    abc123-...                                           │
-│ Project:    /path/to/project                                     │
-│ Started:    2h 15m ago                                           │
-│ Workspace:  handoff (3 panes)                                    │
-├─────────────────────────────────────────────────────────────────┤
-│ CHANGES SINCE INIT                                               │
-│   Modified: 3 files                                              │
-│   Added:    1 files                                              │
-│   Deleted:  0 files                                              │
-├─────────────────────────────────────────────────────────────────┤
-│ AGENTS                                                           │
-│   ● claude (claude)  pane %0                                     │
-│   ○ codex  pane %1                                               │
-├─────────────────────────────────────────────────────────────────┤
-│ RECENT QUERIES                                                   │
-│   -> codex: "review auth implementation" (10 min ago)            │
-└─────────────────────────────────────────────────────────────────┘
-```
+Show session status with change counts, active agents, and recent queries.
 
 ### `handoff list`
 
-List all tmux panes with agent detection and box-drawn table.
-
-```bash
-handoff list
-```
+List all tmux panes with agent detection.
 
 ### `handoff name <label>`
 
-Label the current tmux pane for easier addressing.
+Label the current tmux pane.
 
 ```bash
 handoff name claude
 handoff name codex --pane %3
 ```
+
+## Keyboard Shortcuts (after `handoff setup`)
+
+No `Ctrl+B` prefix needed for any of these:
+
+| Key | Action |
+|-----|--------|
+| `Alt+i` | Move to pane above |
+| `Alt+k` | Move to pane below |
+| `Alt+j` | Move to pane left |
+| `Alt+l` | Move to pane right |
+| `Alt+n` | Split pane side-by-side + auto-tile |
+| `Alt+w` | Close current pane |
+| `Alt+o` | Cycle layouts |
+| `Alt+g` | Mark pane |
+| `Alt+y` | Swap with marked pane |
+| `Alt+u` | Next window |
+| `Alt+h` | Previous window |
+| `Alt+m` | New window |
+| `Alt+Tab` | Toggle scroll/copy mode |
+
+Mouse click selects panes. Drag to select text copies to clipboard automatically.
 
 ## Configuration
 
@@ -182,11 +267,14 @@ Create `.handoff/config.json` in your project (or `~/.handoffrc` for user-level)
 
 ```json
 {
-  "exclude_patterns": ["node_modules", ".git", "dist", "custom-dir"],
+  "exclude_patterns": ["node_modules", ".git", "dist"],
   "max_diff_lines": 50,
-  "diff_context_lines": 3,
-  "tmux_capture_timeout_ms": 10000,
-  "memory_files": ["CLAUDE.md", "AGENTS.md", ".cursorrules", "GEMINI.md"],
+  "tmux": {
+    "mouse": true,
+    "keybindings": true,
+    "paneLabels": true,
+    "clipboard": true
+  },
   "agents": {
     "myagent": {
       "command": "myagent --interactive",
@@ -199,48 +287,38 @@ Create `.handoff/config.json` in your project (or `~/.handoffrc` for user-level)
 
 ## Supported Agents
 
-| Agent | Command | Exit Command |
+| Agent | Command | Memory File |
 |-------|---------|-------------|
-| claude | `claude` | `/exit` |
+| claude | `claude` | `CLAUDE.md` |
 | codex | `codex` | - |
-| gemini | `gemini` | - |
-| aider | `aider` | `/exit` |
-| cursor | `cursor` | - |
+| gemini | `gemini` | `GEMINI.md` |
+| aider | `aider` | - |
+| cursor | `cursor` | `.cursorrules` |
 | copilot | `gh copilot` | - |
-
-Custom agents can be added via config.
 
 ## Requirements
 
 - **Node.js** >= 20
-- **tmux** - required for workspace commands (`start`, `add`, `remove`, `focus`, `layout`, `attach`, `kill`, `list`, `name`, `ask`)
-  - Linux/macOS: install via your package manager
+- **tmux** - required for workspace and bridge commands
+  - Linux/macOS: install via package manager
   - Windows: install WSL and tmux inside it (Windows Terminal recommended)
 
-## How It Works
-
-1. `handoff start claude codex` creates a tmux session named `handoff`, splits it into panes (claude, codex, control), labels each, and starts the agent CLIs
-2. From the **control pane**, you can run `handoff ask`, `handoff export`, `handoff status`, etc.
-3. `handoff init` snapshots your project files to `.handoff/snapshots/`
-4. `handoff export` diffs current state vs snapshot and generates `HANDOFF.md`
-5. When switching agents, the new agent reads `HANDOFF.md` for full context
-
-All operations are local - no external API calls, no cloud sync.
-
-## File Structure Created
+## File Structure
 
 ```
 your-project/
-├── HANDOFF.md           # Generated context file for the next agent
+├── HANDOFF.md           # Generated context file
 └── .handoff/
-    ├── session.json     # Session metadata and file hashes
-    ├── workspace.json   # Workspace state (panes, session name)
+    ├── session.json     # File hashes for change detection
+    ├── workspace.json   # Active workspace pane mapping
+    ├── queries.log      # History of bridge/ask queries
     ├── config.json      # Optional project config
-    ├── queries.log      # Log of all ask queries
-    └── snapshots/       # Copies of files at init time (for diffing)
-```
+    └── snapshots/       # File copies for diffing
 
-Add `.handoff/` to your `.gitignore`.
+~/.handoff/
+    ├── tmux.conf        # Generated tmux config (keyboard, mouse, labels)
+    └── read-guard.json  # Bridge read-guard state
+```
 
 ## License
 
