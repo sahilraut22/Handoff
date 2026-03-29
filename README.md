@@ -1,6 +1,7 @@
 # handoff
 
 [![CI](https://github.com/sahilraut22/Handoff/actions/workflows/ci.yml/badge.svg)](https://github.com/sahilraut22/Handoff/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/handoff-cli.svg)](https://www.npmjs.com/package/handoff-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Seamless context transfer, decision journaling, and workspace management for AI coding agents.
@@ -17,21 +18,11 @@ When multiple AI agents work on the same codebase -- or when you start a new ses
 
 Agents are the primary users. The human prompts their agent; the agent uses `handoff` commands as bash tools.
 
-## Installation
-
-```bash
-# From npm (once published)
-npm install -g handoff-cli
-
-# From GitHub (available now)
-npm install -g github:sahilraut22/Handoff
-```
-
 ## Quick Start
 
 ```bash
 # Install
-npm install -g github:sahilraut22/Handoff
+npm install -g handoff-cli
 
 # One-time tmux setup (keyboard shortcuts, mouse, pane labels)
 handoff setup
