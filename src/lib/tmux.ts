@@ -232,3 +232,80 @@ export function buildTmuxCommand(args: string[]): string {
   }
   return `tmux ${args.map((a) => JSON.stringify(a)).join(' ')}`;
 }
+
+// --- Bridge / IPC functions ---
+
+/**
+ * Type literal text into a pane WITHOUT pressing Enter.
+ * Uses -l (literal) flag so text is not interpreted as key names.
+ */
+export function typeText(paneId: string, text: string): void {
+  runTmux(['send-keys', '-t', paneId, '-l', '--', text]);
+}
+
+/**
+ * Send one or more special key names to a pane (Enter, Escape, C-c, Tab, Up, etc.).
+ * Does NOT use -l so key names are interpreted by tmux.
+ */
+export function sendSpecialKey(paneId: string, ...keys: string[]): void {
+  runTmux(['send-keys', '-t', paneId, ...keys]);
+}
+
+/**
+ * Capture the last N lines from a pane's scrollback buffer.
+ * Uses negative -S value to capture from the end.
+ */
+export function capturePaneLines(paneId: string, lineCount: number): string {
+  try {
+    return runTmux(['capture-pane', '-p', '-t', paneId, '-S', String(-Math.abs(lineCount))]);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Get the current pane's ID. Checks $TMUX_PANE env var first,
+ * falls back to tmux display-message.
+ */
+export function getCurrentPaneId(): string {
+  if (process.env.TMUX_PANE) {
+    return process.env.TMUX_PANE;
+  }
+  try {
+    return runTmux(['display-message', '-p', '#{pane_id}']).trim();
+  } catch {
+    throw new Error('Not running inside a tmux pane. Cannot determine current pane ID.');
+  }
+}
+
+/**
+ * Get pane dimensions and current working directory.
+ */
+export function getPaneInfo(paneId: string): { width: number; height: number; cwd: string } | null {
+  try {
+    const output = runTmux([
+      'display-message', '-t', paneId, '-p',
+      '#{pane_width}|#{pane_height}|#{pane_current_path}',
+    ]).trim();
+    const parts = output.split('|');
+    if (parts.length < 3) return null;
+    return {
+      width: parseInt(parts[0], 10),
+      height: parseInt(parts[1], 10),
+      cwd: parts[2],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Load a tmux config file into the running server.
+ */
+export function sourceConfig(configPath: string): void {
+  try {
+    runTmux(['source-file', configPath]);
+  } catch {
+    // Non-fatal: config may have minor errors on some tmux versions
+  }
+}
