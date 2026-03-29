@@ -1,6 +1,6 @@
 {
   "name": "handoff-cli",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "type": "module",
   "description": "Seamless context transfer, decision journaling, and workspace management for AI coding agents",
   "bin": {
