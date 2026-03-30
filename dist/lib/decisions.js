@@ -91,6 +91,46 @@ export function formatDecisionMarkdown(d) {
     }
     return lines.join('\n');
 }
+export async function saveExtractedDecisions(workingDir, extracted, minConfidence = 0.6) {
+    const eligible = extracted.filter((d) => d.confidence >= minConfidence);
+    if (eligible.length === 0)
+        return [];
+    const existing = await loadAllDecisions(workingDir);
+    const existingTitles = existing.map((d) => d.title);
+    const savedIds = [];
+    for (const e of eligible) {
+        // Simple dedup: skip if very similar title already exists
+        const similar = existingTitles.some((t) => {
+            const tLower = t.toLowerCase();
+            const eLower = e.title.toLowerCase();
+            return tLower.includes(eLower.slice(0, 30)) || eLower.includes(tLower.slice(0, 30));
+        });
+        if (similar)
+            continue;
+        const decision = {
+            id: generateDecisionId(),
+            title: e.title,
+            status: 'proposed',
+            date: new Date().toISOString(),
+            context: e.context,
+            decision: e.decision,
+            alternatives: e.alternatives.length > 0 ? e.alternatives : undefined,
+            tags: e.tags.length > 0 ? e.tags : undefined,
+            confidence: e.confidence,
+            source: e.source,
+            source_location: e.source_location,
+            auto_extracted: true,
+        };
+        await saveDecision(workingDir, decision);
+        savedIds.push(decision.id);
+        existingTitles.push(decision.title);
+    }
+    return savedIds;
+}
+export async function reviewPendingDecisions(workingDir) {
+    const all = await loadAllDecisions(workingDir);
+    return all.filter((d) => d.status === 'proposed' && d.auto_extracted === true);
+}
 export function formatDecisionsTable(decisions) {
     if (decisions.length === 0)
         return 'No decisions recorded.';

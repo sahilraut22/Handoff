@@ -14,10 +14,10 @@ describe('estimateTokens', () => {
     expect(t).toBeLessThanOrEqual(5);
   });
 
-  it('estimates long words as multiple tokens', () => {
-    // "authentication" = 14 chars → multiple tokens
+  it('estimates long words as at least 1 token', () => {
+    // BPE may encode common long words as a single token
     const t = estimateTokens('authentication');
-    expect(t).toBeGreaterThanOrEqual(2);
+    expect(t).toBeGreaterThanOrEqual(1);
     expect(t).toBeLessThanOrEqual(5);
   });
 

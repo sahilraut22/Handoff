@@ -7,8 +7,14 @@ import { compressChanges, extractQueryKeywords } from '../lib/compress.js';
 import { loadAllDecisions } from '../lib/decisions.js';
 import { generateInteropOutput } from '../lib/interop.js';
 import { loadAgentState, saveAgentState, getAgentKnowledge, updateAgentKnowledge, computeDelta, } from '../lib/agent-state.js';
-import { SessionError, HandoffValidationError, FileError, ErrorCode } from '../lib/errors.js';
+import { HandoffValidationError, FileError, ErrorCode } from '../lib/errors.js';
 import { redactSecrets, validateHandoffContent } from '../lib/security.js';
+import { loadSession, saveSession } from '../lib/session.js';
+import { loadWatcherState } from '../lib/watcher.js';
+import { extractDecisions } from '../lib/decision-extractor.js';
+import { saveExtractedDecisions } from '../lib/decisions.js';
+import { publishContext } from '../lib/context-protocol.js';
+import { access } from 'node:fs/promises';
 export function registerExportCommand(program) {
     program
         .command('export')
@@ -35,17 +41,18 @@ export function registerExportCommand(program) {
             throw new HandoffValidationError(ErrorCode.INVALID_FORMAT, `Invalid format: ${outputFormat}.`);
         }
         // Read session
-        let session;
-        try {
-            const sessionContent = await readFile(join(handoffDir, 'session.json'), 'utf-8');
-            session = JSON.parse(sessionContent);
-        }
-        catch {
-            throw new SessionError(ErrorCode.SESSION_NOT_FOUND, 'No active session.');
-        }
+        const session = await loadSession(workingDir);
         const config = await loadConfig(workingDir);
-        // Walk and hash current files
-        console.log('Scanning for changes...');
+        // Check if watcher has fresh data (skip full rescan when daemon is tracking)
+        const watcherState = await loadWatcherState(workingDir);
+        const watcherFresh = watcherState &&
+            (Date.now() - new Date(watcherState.last_scan).getTime()) < 5000;
+        if (watcherFresh) {
+            console.log('Using watcher snapshot (daemon tracking active)...');
+        }
+        else {
+            console.log('Scanning for changes...');
+        }
         const currentFiles = await walkFiles(workingDir, config.exclude_patterns);
         const currentHashes = await hashAllFiles(workingDir, currentFiles);
         // Compute all changes since init
@@ -162,11 +169,31 @@ export function registerExportCommand(program) {
         }
         // Update session
         session.last_export = new Date().toISOString();
-        try {
-            await writeFile(join(handoffDir, 'session.json'), JSON.stringify(session, null, 2), 'utf-8');
+        await saveSession(workingDir, session).catch(() => undefined);
+        // Publish context via file-based IPC if ipc dir exists
+        if (outputFormat === 'markdown') {
+            const ipcDir = join(handoffDir, 'ipc');
+            try {
+                await access(ipcDir);
+                await publishContext(ipcDir, output, session.agent_name ?? 'handoff', session.session_id);
+            }
+            catch {
+                // IPC not initialized -- skip silently
+            }
         }
-        catch {
-            // Non-fatal: export succeeded, session update failed
+        // Auto-extract decisions from diffs
+        const allDiffText = changes
+            .filter((c) => c.diff)
+            .map((c) => `// File: ${c.path}\n${c.diff}`)
+            .join('\n\n');
+        if (allDiffText.trim()) {
+            const extracted = extractDecisions(allDiffText, 'diff');
+            if (extracted.length > 0) {
+                const saved = await saveExtractedDecisions(workingDir, extracted, 0.7);
+                if (saved.length > 0) {
+                    console.log(`Auto-extracted ${saved.length} decision(s) from diffs. Run \`handoff decisions\` to review.`);
+                }
+            }
         }
         // Print summary
         const modified = changes.filter((c) => c.type === 'modified').length;

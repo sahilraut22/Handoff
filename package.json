@@ -1,6 +1,6 @@
 {
   "name": "handoff-cli",
-  "version": "2.4.0",
+  "version": "3.0.0",
   "type": "module",
   "description": "Seamless context transfer, decision journaling, and workspace management for AI coding agents",
   "bin": {
@@ -32,8 +32,10 @@
     "workspace"
   ],
   "dependencies": {
+    "chokidar": "^4.0.0",
     "commander": "^14.0.0",
     "diff": "^8.0.0",
+    "gpt-tokenizer": "^2.9.0",
     "ignore": "^7.0.0"
   },
   "devDependencies": {

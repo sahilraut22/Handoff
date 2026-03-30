@@ -9,6 +9,7 @@
  */
 import type { FileChange, ChangePriority, CompressionOptions, CompressionResult } from '../types/index.js';
 export declare function classifyPriority(change: FileChange): ChangePriority;
+export declare const STOP_WORDS: Set<string>;
 export declare function extractQueryKeywords(query: string): string[];
 export declare function scoreQueryRelevance(change: FileChange, keywords: string[]): number;
 export declare function adjustPriorityForQuery(change: FileChange & {

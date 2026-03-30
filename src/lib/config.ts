@@ -25,6 +25,22 @@ const DEFAULT_CONFIG: HandoffConfig = {
     priority_threshold: 'low',
     semantic_analysis: true,
   },
+  daemon: {
+    enabled: true,
+    auto_start: false,
+    detach: true,
+    debounce_ms: 2000,
+    change_threshold: 3,
+    max_regen_interval_ms: 60000,
+  },
+  ipc: {
+    ipc_dir: '.handoff/ipc',
+    heartbeat_interval_ms: 10000,
+    heartbeat_timeout_ms: 30000,
+    message_ttl_ms: 300000,
+    max_inbox_size: 100,
+    cleanup_interval_ms: 60000,
+  },
 };
 
 async function readJsonFile(filePath: string): Promise<Record<string, unknown> | null> {
@@ -70,6 +86,14 @@ function mergeConfig(base: HandoffConfig, override: Record<string, unknown>, wor
 
   if (typeof override.compression === 'object' && override.compression !== null && !Array.isArray(override.compression)) {
     merged.compression = { ...(base.compression ?? {}), ...(override.compression as Record<string, unknown>) } as HandoffConfig['compression'];
+  }
+
+  if (typeof override.daemon === 'object' && override.daemon !== null && !Array.isArray(override.daemon)) {
+    merged.daemon = { ...(base.daemon ?? {}), ...(override.daemon as Record<string, unknown>) } as HandoffConfig['daemon'];
+  }
+
+  if (typeof override.ipc === 'object' && override.ipc !== null && !Array.isArray(override.ipc)) {
+    merged.ipc = { ...(base.ipc ?? {}), ...(override.ipc as Record<string, unknown>) } as HandoffConfig['ipc'];
   }
 
   return merged;

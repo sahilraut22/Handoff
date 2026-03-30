@@ -1,4 +1,4 @@
-import type { Decision, DecisionStatus } from '../types/index.js';
+import type { Decision, DecisionStatus, ExtractedDecision } from '../types/index.js';
 export declare function generateDecisionId(): string;
 export declare function saveDecision(workingDir: string, decision: Decision): Promise<string>;
 export declare function loadDecision(workingDir: string, id: string): Promise<Decision>;
@@ -6,4 +6,6 @@ export declare function loadAllDecisions(workingDir: string): Promise<Decision[]
 export declare function searchDecisions(workingDir: string, query: string): Promise<Decision[]>;
 export declare function updateDecisionStatus(workingDir: string, id: string, status: DecisionStatus): Promise<void>;
 export declare function formatDecisionMarkdown(d: Decision): string;
+export declare function saveExtractedDecisions(workingDir: string, extracted: ExtractedDecision[], minConfidence?: number): Promise<string[]>;
+export declare function reviewPendingDecisions(workingDir: string): Promise<Decision[]>;
 export declare function formatDecisionsTable(decisions: Decision[]): string;

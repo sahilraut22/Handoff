@@ -28,19 +28,30 @@ src/
 - `markdown.ts` -- HANDOFF.md generation with frontmatter
 - `compress.ts` -- priority-based diff compression with token budgets
 - `semantic.ts` -- regex-based entity extraction from source files
-- `decisions.ts` -- decision journal CRUD
+- `semantic-chunker.ts` -- function-level diff chunking (Phase 3)
+- `tokens.ts` -- accurate BPE token counting via gpt-tokenizer
+- `textrank.ts` -- TextRank extractive summarization (Phase 3)
+- `tfidf.ts` -- TF-IDF vectors and cosine similarity (Phase 3)
+- `decisions.ts` -- decision journal CRUD + auto-extraction support
+- `decision-extractor.ts` -- NLP/regex decision detection from diffs (Phase 2)
+- `conversation-monitor.ts` -- agent log monitoring + CLI wrapper (Phase 2)
+- `watcher.ts` -- chokidar-based file watching engine (Phase 1)
+- `daemon.ts` -- background daemon process management (Phase 1)
+- `session.ts` -- shared session load/save helpers
+- `ipc.ts` -- file-based cross-platform IPC messaging (Phase 4)
+- `context-protocol.ts` -- shared HANDOFF.md context distribution (Phase 4)
 - `yaml-lite.ts` -- minimal YAML serializer for Decision type
 - `protocol.ts` -- frontmatter parsing and validation
 - `schema.ts` -- JSON Schema for frontmatter
 - `interop.ts` -- output format conversion (JSON, CLAUDE.md, AGENTS.md)
 - `tmux.ts` -- tmux abstraction (WSL-aware on Windows)
 - `agents.ts` -- agent registry and detection
-- `workspace.ts` -- tmux workspace lifecycle
-- `config.ts` -- layered config loading
+- `workspace.ts` -- tmux workspace lifecycle (IPC-aware)
+- `config.ts` -- layered config loading (daemon + IPC sections)
 
 ## Conventions
 
-- **Zero new runtime dependencies** -- we have 3 (commander, diff, ignore). Do not add more without discussion.
+- **Runtime dependencies** -- 5 total: commander, diff, ignore, chokidar (file watching), gpt-tokenizer (BPE tokenization). New deps require discussion.
 - **ESM throughout** -- all imports use `.js` extensions, `import.meta.url` for file paths
 - **No default exports** -- use named exports only
 - **Error handling** -- commands call `process.exit(1)` on user errors, `process.exit(2)` on system errors

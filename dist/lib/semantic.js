@@ -178,4 +178,66 @@ export function extractChangedNames(diff, filePath) {
     }
     return Array.from(names);
 }
+/**
+ * Extract entities with their full line ranges (start to closing brace / end of block).
+ * Used by semantic-chunker.ts to produce function-level diff chunks.
+ */
+export function extractEntityRanges(content, language) {
+    const entities = extractEntities(content, language);
+    if (entities.length === 0)
+        return [];
+    const lines = content.split('\n');
+    const ranges = [];
+    for (const entity of entities) {
+        const startLine = entity.line - 1; // convert to 0-indexed
+        // For Python: use indentation to determine block end
+        if (language === 'python') {
+            const declarationIndent = (lines[startLine]?.match(/^(\s*)/) ?? ['', ''])[1].length;
+            let endLine = startLine;
+            for (let i = startLine + 1; i < lines.length; i++) {
+                const line = lines[i] ?? '';
+                if (line.trim() === '')
+                    continue; // blank lines allowed inside block
+                const indent = (line.match(/^(\s*)/) ?? ['', ''])[1].length;
+                if (indent <= declarationIndent)
+                    break;
+                endLine = i;
+            }
+            ranges.push({ entity, start_line: startLine, end_line: endLine });
+            continue;
+        }
+        // For brace-based languages: count { } to find matching close
+        let depth = 0;
+        let foundOpen = false;
+        let endLine = startLine;
+        for (let i = startLine; i < Math.min(startLine + 300, lines.length); i++) {
+            const line = lines[i] ?? '';
+            for (const ch of line) {
+                if (ch === '{') {
+                    depth++;
+                    foundOpen = true;
+                }
+                else if (ch === '}') {
+                    depth--;
+                    if (foundOpen && depth <= 0) {
+                        endLine = i;
+                        break;
+                    }
+                }
+            }
+            if (foundOpen && depth <= 0)
+                break;
+        }
+        // If no braces found (e.g., type alias), end at next blank line
+        if (!foundOpen) {
+            for (let i = startLine + 1; i < lines.length; i++) {
+                if ((lines[i] ?? '').trim() === '')
+                    break;
+                endLine = i;
+            }
+        }
+        ranges.push({ entity, start_line: startLine, end_line: Math.max(startLine, endLine) });
+    }
+    return ranges;
+}
 //# sourceMappingURL=semantic.js.map

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { SessionError, TmuxError, AgentError, ErrorCode } from './errors.js';
 import { logger } from './logger.js';
 import { sanitizeAgentName } from './security.js';
+import { initIpc, updatePresence } from './ipc.js';
 import { hasSession, newSession, splitPane, killPane, killSession, selectPane, selectLayout, attachSession, resizePane, setPaneTitle, sendKeys, sourceConfig, } from './tmux.js';
 import { getAgentConfig } from './agents.js';
 const DEFAULT_SESSION_NAME = 'handoff';
@@ -99,6 +100,12 @@ export async function createWorkspace(agents, workingDir, config, options) {
     // Focus control pane
     selectPane(controlPaneId);
     await saveWorkspaceState(workingDir, state);
+    // Initialize file-based IPC directory and register agent presences
+    const ipcDir = join(workingDir, '.handoff', 'ipc');
+    await initIpc(ipcDir).catch(() => undefined);
+    for (const agentName of agents) {
+        await updatePresence(ipcDir, agentName, 'active').catch(() => undefined);
+    }
     attachSession(sessionName);
 }
 export async function addAgentToWorkspace(agentName, workingDir, config) {

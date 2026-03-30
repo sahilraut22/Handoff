@@ -18,6 +18,8 @@ import { registerKillCommand } from './commands/kill.js';
 import { registerBridgeCommand } from './commands/bridge.js';
 import { registerSetupCommand } from './commands/setup.js';
 import { registerBenchmarkCommand } from './commands/benchmark.js';
+import { registerWatchCommand } from './commands/watch.js';
+import { registerRunCommand } from './commands/run.js';
 import { registerDecideCommand } from './commands/decide.js';
 import { registerDecisionsCommand } from './commands/decisions.js';
 import { registerValidateCommand } from './commands/validate.js';
@@ -53,6 +55,9 @@ registerNameCommand(program);
 registerStatusCommand(program);
 // Agent-to-agent IPC bridge
 registerBridgeCommand(program);
+// Watcher daemon
+registerWatchCommand(program);
+registerRunCommand(program);
 // Setup / diagnostics
 registerSetupCommand(program);
 registerBenchmarkCommand(program);

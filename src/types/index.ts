@@ -139,6 +139,10 @@ export interface Decision {
   tags?: string[];
   supersedes?: string;
   agent?: string;
+  confidence?: number;
+  source?: 'manual' | 'diff' | 'conversation' | 'commit';
+  source_location?: string;
+  auto_extracted?: boolean;
 }
 
 // --- Protocol / frontmatter types ---
@@ -178,6 +182,8 @@ export interface HandoffConfig {
   agents?: Record<string, Partial<AgentConfig>>;
   tmux?: Partial<TmuxConfig>;
   compression?: Partial<CompressionConfig>;
+  daemon?: Partial<DaemonConfig>;
+  ipc?: Partial<IpcConfig>;
 }
 
 export interface TmuxPane {
@@ -194,6 +200,115 @@ export interface DetectedAgent {
   name: string;
   pane: TmuxPane;
   label?: string;
+}
+
+// --- Watcher / Daemon types ---
+
+export interface WatcherConfig {
+  working_dir: string;
+  exclude_patterns: string[];
+  debounce_ms: number;
+  auto_regenerate: boolean;
+  change_threshold: number;
+  max_regen_interval_ms: number;
+}
+
+export interface WatcherState {
+  pid: number;
+  started_at: string;
+  last_scan: string;
+  changes_since_regen: number;
+  total_regenerations: number;
+  watched_files: number;
+}
+
+export interface DaemonConfig {
+  enabled: boolean;
+  auto_start: boolean;
+  detach: boolean;
+  debounce_ms: number;
+  change_threshold: number;
+  max_regen_interval_ms: number;
+}
+
+// --- Decision extraction types ---
+
+export interface DecisionPattern {
+  name: string;
+  trigger: RegExp;
+  context_window: number;
+  confidence_base: number;
+  tag?: string;
+}
+
+export interface ExtractionConfig {
+  min_confidence: number;
+  max_decisions_per_scan: number;
+  patterns: DecisionPattern[];
+}
+
+export interface ExtractedDecision {
+  title: string;
+  context: string;
+  decision: string;
+  alternatives: string[];
+  confidence: number;
+  source: 'diff' | 'conversation' | 'commit';
+  source_location?: string;
+  tags: string[];
+}
+
+export interface MonitorConfig {
+  agent: string;
+  log_paths: string[];
+  poll_interval_ms: number;
+  last_read_offset: number;
+}
+
+export interface MonitoredAgent {
+  name: string;
+  log_path: string | null;
+  status: 'monitoring' | 'not-found' | 'error';
+}
+
+// --- IPC types ---
+
+export interface IpcMessage {
+  id: string;
+  from: string;
+  to: string;
+  timestamp: string;
+  type: 'text' | 'context' | 'command' | 'heartbeat' | 'event';
+  content: string;
+  metadata?: Record<string, unknown>;
+  ttl_ms?: number;
+}
+
+export interface IpcConfig {
+  ipc_dir: string;
+  heartbeat_interval_ms: number;
+  heartbeat_timeout_ms: number;
+  message_ttl_ms: number;
+  max_inbox_size: number;
+  cleanup_interval_ms: number;
+}
+
+export interface AgentPresence {
+  agent: string;
+  status: 'active' | 'idle' | 'offline';
+  last_heartbeat: string;
+  pid?: number;
+  working_dir?: string;
+  capabilities?: string[];
+}
+
+export interface ContextFile {
+  version: '3.0';
+  session_id: string;
+  last_updated: string;
+  last_updated_by: string;
+  content_hash: string;
+  agents_notified: string[];
 }
 
 export interface HandoffContext {

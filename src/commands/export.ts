@@ -16,7 +16,14 @@ import {
 } from '../lib/agent-state.js';
 import { SessionError, HandoffValidationError, FileError, ErrorCode } from '../lib/errors.js';
 import { redactSecrets, validateHandoffContent } from '../lib/security.js';
-import type { Session, HandoffContext } from '../types/index.js';
+import { loadSession, saveSession } from '../lib/session.js';
+import { loadWatcherState } from '../lib/watcher.js';
+import { extractDecisions } from '../lib/decision-extractor.js';
+import { saveExtractedDecisions } from '../lib/decisions.js';
+import { publishContext } from '../lib/context-protocol.js';
+import { initIpc } from '../lib/ipc.js';
+import { access } from 'node:fs/promises';
+import type { HandoffContext } from '../types/index.js';
 
 export function registerExportCommand(program: Command): void {
   program
@@ -59,18 +66,18 @@ export function registerExportCommand(program: Command): void {
       }
 
       // Read session
-      let session: Session;
-      try {
-        const sessionContent = await readFile(join(handoffDir, 'session.json'), 'utf-8');
-        session = JSON.parse(sessionContent) as Session;
-      } catch {
-        throw new SessionError(ErrorCode.SESSION_NOT_FOUND, 'No active session.');
-      }
-
+      const session = await loadSession(workingDir);
       const config = await loadConfig(workingDir);
 
-      // Walk and hash current files
-      console.log('Scanning for changes...');
+      // Check if watcher has fresh data (skip full rescan when daemon is tracking)
+      const watcherState = await loadWatcherState(workingDir);
+      const watcherFresh = watcherState &&
+        (Date.now() - new Date(watcherState.last_scan).getTime()) < 5000;
+      if (watcherFresh) {
+        console.log('Using watcher snapshot (daemon tracking active)...');
+      } else {
+        console.log('Scanning for changes...');
+      }
       const currentFiles = await walkFiles(workingDir, config.exclude_patterns);
       const currentHashes = await hashAllFiles(workingDir, currentFiles);
 
@@ -213,10 +220,32 @@ export function registerExportCommand(program: Command): void {
 
       // Update session
       session.last_export = new Date().toISOString();
-      try {
-        await writeFile(join(handoffDir, 'session.json'), JSON.stringify(session, null, 2), 'utf-8');
-      } catch {
-        // Non-fatal: export succeeded, session update failed
+      await saveSession(workingDir, session).catch(() => undefined);
+
+      // Publish context via file-based IPC if ipc dir exists
+      if (outputFormat === 'markdown') {
+        const ipcDir = join(handoffDir, 'ipc');
+        try {
+          await access(ipcDir);
+          await publishContext(ipcDir, output, session.agent_name ?? 'handoff', session.session_id);
+        } catch {
+          // IPC not initialized -- skip silently
+        }
+      }
+
+      // Auto-extract decisions from diffs
+      const allDiffText = changes
+        .filter((c) => c.diff)
+        .map((c) => `// File: ${c.path}\n${c.diff}`)
+        .join('\n\n');
+      if (allDiffText.trim()) {
+        const extracted = extractDecisions(allDiffText, 'diff');
+        if (extracted.length > 0) {
+          const saved = await saveExtractedDecisions(workingDir, extracted, 0.7);
+          if (saved.length > 0) {
+            console.log(`Auto-extracted ${saved.length} decision(s) from diffs. Run \`handoff decisions\` to review.`);
+          }
+        }
       }
 
       // Print summary

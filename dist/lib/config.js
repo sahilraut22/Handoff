@@ -23,6 +23,22 @@ const DEFAULT_CONFIG = {
         priority_threshold: 'low',
         semantic_analysis: true,
     },
+    daemon: {
+        enabled: true,
+        auto_start: false,
+        detach: true,
+        debounce_ms: 2000,
+        change_threshold: 3,
+        max_regen_interval_ms: 60000,
+    },
+    ipc: {
+        ipc_dir: '.handoff/ipc',
+        heartbeat_interval_ms: 10000,
+        heartbeat_timeout_ms: 30000,
+        message_ttl_ms: 300000,
+        max_inbox_size: 100,
+        cleanup_interval_ms: 60000,
+    },
 };
 async function readJsonFile(filePath) {
     try {
@@ -66,6 +82,12 @@ function mergeConfig(base, override, workingDir = process.cwd()) {
     }
     if (typeof override.compression === 'object' && override.compression !== null && !Array.isArray(override.compression)) {
         merged.compression = { ...(base.compression ?? {}), ...override.compression };
+    }
+    if (typeof override.daemon === 'object' && override.daemon !== null && !Array.isArray(override.daemon)) {
+        merged.daemon = { ...(base.daemon ?? {}), ...override.daemon };
+    }
+    if (typeof override.ipc === 'object' && override.ipc !== null && !Array.isArray(override.ipc)) {
+        merged.ipc = { ...(base.ipc ?? {}), ...override.ipc };
     }
     return merged;
 }

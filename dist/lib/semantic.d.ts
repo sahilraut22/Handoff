@@ -27,3 +27,13 @@ export declare function formatSemanticSummary(diff: SemanticDiff): string;
  * Looks for function/class declarations near changed lines (+/-).
  */
 export declare function extractChangedNames(diff: string, filePath: string): string[];
+export interface EntityRange {
+    entity: SemanticEntity;
+    start_line: number;
+    end_line: number;
+}
+/**
+ * Extract entities with their full line ranges (start to closing brace / end of block).
+ * Used by semantic-chunker.ts to produce function-level diff chunks.
+ */
+export declare function extractEntityRanges(content: string, language: string): EntityRange[];

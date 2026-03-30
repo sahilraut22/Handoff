@@ -10,6 +10,8 @@
 
 import { computeSemanticDiff, formatSemanticSummary, extractChangedNames } from './semantic.js';
 import { estimateTokens } from './tokens.js';
+import { chunkDiff, selectChunks, scoreChunks, assembleChunks } from './semantic-chunker.js';
+import { rankByRelevance } from './tfidf.js';
 import type {
   FileChange,
   CompressedChange,
@@ -147,7 +149,7 @@ export function classifyPriority(change: FileChange): ChangePriority {
 
 // --- Query-adaptive relevance ---
 
-const STOP_WORDS = new Set([
+export const STOP_WORDS = new Set([
   'the','a','an','is','are','was','were','be','been','being','have','has','had',
   'do','does','did','will','would','could','should','may','might','must','shall',
   'can','need','to','of','in','for','on','with','at','by','from','as','into',
@@ -438,6 +440,21 @@ export function compressChanges(
     low: Math.floor(tokenBudget * 0.07),
   };
 
+  // Step 4b: Re-rank by TF-IDF if query provided (more accurate than keyword overlap)
+  if (queryKeywords.length > 0 && sorted.length > 0) {
+    const query = queryKeywords.join(' ');
+    const docs = sorted.map((c) => `${c.path} ${c.diff ?? ''} ${c.summary}`);
+    const ranked = rankByRelevance(query, docs);
+    // Boost priority of top TF-IDF ranked changes
+    for (const r of ranked.slice(0, Math.ceil(sorted.length * 0.3))) {
+      if (r.score > 0.2) {
+        sorted[r.index]!.priority = boostPriority(sorted[r.index]!.priority, 1);
+      }
+    }
+    // Re-sort after TF-IDF boost
+    sorted.sort((a, b) => PRIORITY_ORDER[b.priority] - PRIORITY_ORDER[a.priority]);
+  }
+
   const result: CompressedChange[] = [];
   const budgetUsed: Record<ChangePriority, number> = { critical: 0, high: 0, medium: 0, low: 0 };
 
@@ -456,19 +473,33 @@ export function compressChanges(
     if (fullTokens <= remaining) {
       result.push({ ...change, compressed_diff: change.diff });
       budgetUsed[tier] += fullTokens;
+    } else if (remaining > 100) {
+      // Use semantic chunking for all tiers when we have enough budget
+      const diffChunks = chunkDiff(change.diff, change.path);
+      const queryStr = queryKeywords.join(' ');
+      const scoredChunks = queryStr ? scoreChunks(diffChunks, queryStr) : diffChunks;
+
+      // Mark critical-identifier lines as high importance
+      const chunksWithBoost = scoredChunks.map((chunk) => {
+        for (const id of criticalIdentifiers) {
+          if (chunk.content.includes(id)) {
+            return { ...chunk, importance: Math.min(1, chunk.importance + 0.3) };
+          }
+        }
+        return chunk;
+      });
+
+      const selected = selectChunks(chunksWithBoost, remaining);
+      const totalLines = change.diff.split('\n').length;
+      const compressed = assembleChunks(selected, totalLines);
+
+      result.push({ ...change, compressed_diff: compressed });
+      budgetUsed[tier] += estimateTokens(compressed);
     } else if (remaining > 50) {
-      // Use coherent compression for medium/low (reference-aware),
-      // simple compression for critical/high (preserve more content)
+      // Fallback to coherent compression for very tight budgets
       const targetChars = remaining * 4;
       const targetLines = Math.max(10, Math.floor(targetChars / 80));
-
-      let compressed: string;
-      if (tier === 'medium' || tier === 'low') {
-        compressed = compressDiffCoherent(change.diff, targetLines, criticalIdentifiers);
-      } else {
-        compressed = compressDiff(change.diff, targetLines);
-      }
-
+      const compressed = compressDiffCoherent(change.diff, targetLines, criticalIdentifiers);
       result.push({ ...change, compressed_diff: compressed });
       budgetUsed[tier] += estimateTokens(compressed);
     } else {

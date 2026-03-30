@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 import {
   isTmuxAvailable,
   hasSession,
@@ -24,7 +24,16 @@ import { loadConfig } from '../lib/config.js';
 import { formatTable, formatStatusSymbol } from '../lib/ui.js';
 import { TmuxError, AgentError, ErrorCode } from '../lib/errors.js';
 import { sanitizeAgentName } from '../lib/security.js';
-import type { WorkspacePane } from '../types/index.js';
+import {
+  sendMessage,
+  readInbox,
+  updatePresence,
+  getPresences,
+  isAgentAlive,
+  initIpc,
+} from '../lib/ipc.js';
+import { publishContext, readContext, acknowledgeContext } from '../lib/context-protocol.js';
+import type { WorkspacePane, IpcMessage } from '../types/index.js';
 
 function requireTmux(): void {
   if (!isTmuxAvailable()) {
@@ -349,5 +358,135 @@ export function registerBridgeCommand(program: Command): void {
         console.log('Some checks failed. Try: handoff start claude codex');
         process.exit(1);
       }
+    });
+
+  // ---- File-based IPC commands ----
+
+  // bridge inbox [agent]
+  bridge
+    .command('inbox [agent]')
+    .description('Read file-based inbox for an agent (cross-platform IPC).')
+    .option('-d, --dir <path>', 'Working directory', process.cwd())
+    .option('--delete', 'Delete messages after reading')
+    .action(async (agent: string | undefined, options: { dir: string; delete?: boolean }) => {
+      const workingDir = resolve(options.dir);
+      const ipcDir = join(workingDir, '.handoff', 'ipc');
+      const agentName = agent ?? process.env['HANDOFF_AGENT'] ?? 'unknown';
+      const messages = await readInbox(ipcDir, agentName, { deleteAfterRead: options.delete });
+      if (messages.length === 0) {
+        console.log('No messages.');
+        return;
+      }
+      for (const msg of messages) {
+        console.log(`[${msg.timestamp}] from:${msg.from} type:${msg.type}`);
+        console.log(`  ${msg.content}`);
+      }
+    });
+
+  // bridge send <to> <message>
+  bridge
+    .command('send <to> <message>')
+    .description('Send a file-based IPC message to an agent.')
+    .option('-d, --dir <path>', 'Working directory', process.cwd())
+    .option('--from <agent>', 'Sender agent name', 'cli')
+    .action(async (to: string, message: string, options: { dir: string; from: string }) => {
+      const workingDir = resolve(options.dir);
+      const ipcDir = join(workingDir, '.handoff', 'ipc');
+      await initIpc(ipcDir);
+      const msg: IpcMessage = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        from: options.from,
+        to,
+        timestamp: new Date().toISOString(),
+        type: 'text',
+        content: message,
+      };
+      await sendMessage(ipcDir, msg);
+      console.log(`Message sent to ${to}.`);
+    });
+
+  // bridge presence
+  bridge
+    .command('presence')
+    .description('Show all agent presences detected via file-based IPC.')
+    .option('-d, --dir <path>', 'Working directory', process.cwd())
+    .action(async (options: { dir: string }) => {
+      const workingDir = resolve(options.dir);
+      const ipcDir = join(workingDir, '.handoff', 'ipc');
+      const presences = await getPresences(ipcDir);
+      if (presences.length === 0) {
+        console.log('No agents detected.');
+        return;
+      }
+      for (const p of presences) {
+        const alive = isAgentAlive(p);
+        const status = alive ? p.status : 'offline';
+        const icon = alive ? '\u2713' : '\u2717';
+        console.log(`${icon} ${p.agent} (${status}) -- last heartbeat: ${p.last_heartbeat}`);
+      }
+    });
+
+  // bridge heartbeat <agent>
+  bridge
+    .command('heartbeat <agent>')
+    .description('Update heartbeat presence file for an agent.')
+    .option('-d, --dir <path>', 'Working directory', process.cwd())
+    .option('--idle', 'Mark agent as idle (default: active)')
+    .action(async (agent: string, options: { dir: string; idle?: boolean }) => {
+      const workingDir = resolve(options.dir);
+      const ipcDir = join(workingDir, '.handoff', 'ipc');
+      await initIpc(ipcDir);
+      await updatePresence(ipcDir, agent, options.idle ? 'idle' : 'active');
+      console.log(`Heartbeat updated for ${agent}.`);
+    });
+
+  // bridge context
+  bridge
+    .command('context')
+    .description('Read the latest shared HANDOFF.md context from IPC.')
+    .option('-d, --dir <path>', 'Working directory', process.cwd())
+    .option('--wait', 'Wait until new context is available (polls every 2s)')
+    .option('--agent <name>', 'Agent name for acknowledgement')
+    .action(async (options: { dir: string; wait?: boolean; agent?: string }) => {
+      const workingDir = resolve(options.dir);
+      const ipcDir = join(workingDir, '.handoff', 'ipc');
+
+      let ctx = await readContext(ipcDir);
+
+      if (!ctx && options.wait) {
+        console.log('Waiting for context...');
+        await new Promise<void>((resolve) => {
+          const timer = setInterval(async () => {
+            ctx = await readContext(ipcDir);
+            if (ctx) {
+              clearInterval(timer);
+              resolve();
+            }
+          }, 2000);
+        });
+      }
+
+      if (!ctx) {
+        console.log('No context available. Run `handoff export` first.');
+        return;
+      }
+
+      process.stdout.write(ctx.content);
+
+      if (options.agent) {
+        await acknowledgeContext(ipcDir, options.agent);
+      }
+    });
+
+  // bridge init-ipc
+  bridge
+    .command('init-ipc')
+    .description('Initialize file-based IPC directory structure.')
+    .option('-d, --dir <path>', 'Working directory', process.cwd())
+    .action(async (options: { dir: string }) => {
+      const workingDir = resolve(options.dir);
+      const ipcDir = join(workingDir, '.handoff', 'ipc');
+      await initIpc(ipcDir);
+      console.log(`IPC initialized at ${ipcDir}`);
     });
 }

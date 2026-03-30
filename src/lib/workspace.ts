@@ -4,6 +4,7 @@ import type { WorkspaceState, HandoffConfig } from '../types/index.js';
 import { SessionError, TmuxError, AgentError, ErrorCode } from './errors.js';
 import { logger } from './logger.js';
 import { sanitizeAgentName } from './security.js';
+import { initIpc, updatePresence } from './ipc.js';
 import {
   hasSession,
   newSession,
@@ -140,6 +141,14 @@ export async function createWorkspace(
   selectPane(controlPaneId);
 
   await saveWorkspaceState(workingDir, state);
+
+  // Initialize file-based IPC directory and register agent presences
+  const ipcDir = join(workingDir, '.handoff', 'ipc');
+  await initIpc(ipcDir).catch(() => undefined);
+  for (const agentName of agents) {
+    await updatePresence(ipcDir, agentName, 'active').catch(() => undefined);
+  }
+
   attachSession(sessionName);
 }
 
