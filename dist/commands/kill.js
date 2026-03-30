@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { isTmuxAvailable, hasSession } from '../lib/tmux.js';
 import { destroyWorkspace, loadWorkspaceState } from '../lib/workspace.js';
+import { TmuxError, HandoffValidationError, ErrorCode } from '../lib/errors.js';
 export function registerKillCommand(program) {
     program
         .command('kill')
@@ -10,28 +11,19 @@ export function registerKillCommand(program) {
         .option('-d, --dir <path>', 'Working directory (default: current directory)')
         .action(async (options) => {
         if (!isTmuxAvailable()) {
-            console.error('tmux is not available.');
-            process.exit(1);
+            throw new TmuxError(ErrorCode.TMUX_NOT_AVAILABLE, 'tmux is not available.');
         }
         const workingDir = resolve(options.dir ?? process.cwd());
         const state = await loadWorkspaceState(workingDir);
         const sessionName = options.session ?? state?.session_name ?? 'handoff';
         if (!hasSession(sessionName)) {
-            console.error(`Session '${sessionName}' is not running.`);
-            process.exit(1);
+            throw new TmuxError(ErrorCode.TMUX_SESSION_NOT_FOUND, `Session '${sessionName}' is not running.`);
         }
         if (!options.force) {
-            console.error(`Session '${sessionName}' will be destroyed. Use --force to confirm.`);
-            process.exit(1);
+            throw new HandoffValidationError(ErrorCode.VALIDATION_FAILED, `Session '${sessionName}' will be destroyed.`, { recoveryHint: 'Use --force to confirm.' });
         }
-        try {
-            await destroyWorkspace(workingDir, { sessionName });
-            console.log(`Session '${sessionName}' killed.`);
-        }
-        catch (err) {
-            console.error(err.message);
-            process.exit(1);
-        }
+        await destroyWorkspace(workingDir, { sessionName });
+        console.log(`Session '${sessionName}' killed.`);
     });
 }
 //# sourceMappingURL=kill.js.map

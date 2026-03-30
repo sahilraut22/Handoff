@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { loadConfig } from '../lib/config.js';
 import { walkFiles, hashAllFiles, snapshotAllFiles } from '../lib/snapshot.js';
+import { SessionError, FileError, ErrorCode } from '../lib/errors.js';
 import type { Session } from '../types/index.js';
 
 export function registerInitCommand(program: Command): void {
@@ -21,17 +22,25 @@ export function registerInitCommand(program: Command): void {
       try {
         await access(join(handoffDir, 'session.json'));
         if (!options.force) {
-          console.error('Session already exists. Use --force to re-initialize.');
-          process.exit(1);
+          throw new SessionError(ErrorCode.SESSION_EXPIRED,
+            'Session already exists.',
+            { recoveryHint: 'Use --force to re-initialize.' });
         }
         // Clean up old session
         await rm(handoffDir, { recursive: true, force: true });
-      } catch {
+      } catch (err) {
+        if (err instanceof SessionError) throw err;
         // No existing session, proceed
       }
 
       // Create directories
-      await mkdir(snapshotDir, { recursive: true });
+      try {
+        await mkdir(snapshotDir, { recursive: true });
+      } catch (err) {
+        throw new FileError(ErrorCode.FILE_WRITE_ERROR,
+          `Failed to create .handoff directory: ${(err as Error).message}`,
+          { cause: err as Error });
+      }
 
       // Load config
       const config = await loadConfig(workingDir);
@@ -57,11 +66,17 @@ export function registerInitCommand(program: Command): void {
         excluded_patterns: config.exclude_patterns,
       };
 
-      await writeFile(
-        join(handoffDir, 'session.json'),
-        JSON.stringify(session, null, 2),
-        'utf-8'
-      );
+      try {
+        await writeFile(
+          join(handoffDir, 'session.json'),
+          JSON.stringify(session, null, 2),
+          'utf-8'
+        );
+      } catch (err) {
+        throw new FileError(ErrorCode.FILE_WRITE_ERROR,
+          `Failed to write session file: ${(err as Error).message}`,
+          { cause: err as Error });
+      }
 
       console.log(`\nSession initialized: ${session.session_id}`);
       console.log(`Tracking ${files.length} files in ${workingDir}`);

@@ -3,6 +3,7 @@ import { detectAgents } from '../lib/agents.js';
 import { formatTable, formatStatusSymbol } from '../lib/ui.js';
 import { loadWorkspaceState } from '../lib/workspace.js';
 import { resolve } from 'node:path';
+import { TmuxError, ErrorCode } from '../lib/errors.js';
 export function registerListCommand(program) {
     program
         .command('list')
@@ -10,8 +11,7 @@ export function registerListCommand(program) {
         .option('-d, --dir <path>', 'Working directory (default: current directory)')
         .action(async (options) => {
         if (!isTmuxAvailable()) {
-            console.error('tmux is not available. Start a tmux session to use this command.');
-            process.exit(1);
+            throw new TmuxError(ErrorCode.TMUX_NOT_AVAILABLE, 'tmux is not available. Start a tmux session to use this command.');
         }
         const workingDir = resolve(options.dir ?? process.cwd());
         const state = await loadWorkspaceState(workingDir);

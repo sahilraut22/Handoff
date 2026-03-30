@@ -22,12 +22,14 @@ import { getAgentConfig } from '../lib/agents.js';
 import { loadWorkspaceState, saveWorkspaceState } from '../lib/workspace.js';
 import { loadConfig } from '../lib/config.js';
 import { formatTable, formatStatusSymbol } from '../lib/ui.js';
+import { TmuxError, AgentError, ErrorCode } from '../lib/errors.js';
+import { sanitizeAgentName } from '../lib/security.js';
 import type { WorkspacePane } from '../types/index.js';
 
 function requireTmux(): void {
   if (!isTmuxAvailable()) {
-    console.error('tmux is not available. Install tmux (or use WSL on Windows) to use bridge commands.');
-    process.exit(1);
+    throw new TmuxError(ErrorCode.TMUX_NOT_AVAILABLE,
+      'tmux is not available. Install tmux (or use WSL on Windows) to use bridge commands.');
   }
 }
 
@@ -115,11 +117,12 @@ export function registerBridgeCommand(program: Command): void {
           const callerPaneId = getCurrentPaneId();
           const guardPassed = await checkReadGuard(callerPaneId, paneId);
           if (!guardPassed) {
-            console.error(`Read guard: you must read pane '${target}' before typing to it.`);
-            console.error(`Run: handoff bridge read ${target}`);
-            process.exit(1);
+            throw new TmuxError(ErrorCode.TMUX_COMMAND_FAILED,
+              `Read guard: you must read pane '${target}' before typing to it.`,
+              { recoveryHint: `Run: handoff bridge read ${target}` });
           }
-        } catch {
+        } catch (err) {
+          if (err instanceof TmuxError) throw err;
           // Not in tmux, skip guard
         }
       }
@@ -179,14 +182,15 @@ export function registerBridgeCommand(program: Command): void {
     .option('--vertical', 'Split vertically (top-bottom)')
     .action(async (agentName: string, options: { session: string; dir?: string; horizontal?: boolean; vertical?: boolean }) => {
       requireTmux();
+      sanitizeAgentName(agentName);
       const workingDir = resolve(options.dir ?? process.cwd());
       const config = await loadConfig(workingDir);
       const agentConfig = getAgentConfig(agentName, config.agents);
 
       if (!agentConfig) {
-        console.error(`Unknown agent '${agentName}'. Use a known agent or add it to .handoff/config.json.`);
-        console.error(`Known agents: claude, codex, gemini, aider, cursor, copilot`);
-        process.exit(1);
+        throw new AgentError(ErrorCode.AGENT_NOT_FOUND,
+          `Unknown agent '${agentName}'.`,
+          { recoveryHint: 'Use a known agent or add it to .handoff/config.json. Known agents: claude, codex, gemini, aider, cursor, copilot' });
       }
 
       // Find current pane to split from
@@ -197,8 +201,8 @@ export function registerBridgeCommand(program: Command): void {
         // Not inside tmux pane - use first pane of session
         const sessionPanes = getSessionPanes(options.session);
         if (sessionPanes.length === 0) {
-          console.error(`No panes found in session '${options.session}'.`);
-          process.exit(1);
+          throw new TmuxError(ErrorCode.TMUX_SESSION_NOT_FOUND,
+            `No panes found in session '${options.session}'.`);
         }
         sourcePaneId = sessionPanes[0].pane_id;
       }
@@ -273,13 +277,8 @@ export function registerBridgeCommand(program: Command): void {
     .option('-s, --session <name>', 'tmux session name', 'handoff')
     .action((label: string, options: { session: string }) => {
       requireTmux();
-      try {
-        const paneId = resolveTarget(label, options.session);
-        console.log(paneId);
-      } catch (err) {
-        console.error((err as Error).message);
-        process.exit(1);
-      }
+      const paneId = resolveTarget(label, options.session);
+      console.log(paneId);
     });
 
   // bridge id
@@ -288,19 +287,14 @@ export function registerBridgeCommand(program: Command): void {
     .description('Print the current pane\'s ID and label.')
     .action(() => {
       requireTmux();
-      try {
-        const paneId = getCurrentPaneId();
-        const panes = listPanes();
-        const currentPane = panes.find((p) => p.pane_id === paneId);
-        const label = currentPane?.pane_title;
-        if (label) {
-          console.log(`${paneId} (${label})`);
-        } else {
-          console.log(paneId);
-        }
-      } catch (err) {
-        console.error((err as Error).message);
-        process.exit(1);
+      const paneId = getCurrentPaneId();
+      const panes = listPanes();
+      const currentPane = panes.find((p) => p.pane_id === paneId);
+      const label = currentPane?.pane_title;
+      if (label) {
+        console.log(`${paneId} (${label})`);
+      } else {
+        console.log(paneId);
       }
     });
 

@@ -4,6 +4,7 @@ import { isTmuxAvailable } from '../lib/tmux.js';
 import { loadConfig } from '../lib/config.js';
 import { createWorkspace } from '../lib/workspace.js';
 import { installTmuxConfig } from '../lib/tmux-config.js';
+import { TmuxError, ErrorCode } from '../lib/errors.js';
 export function registerStartCommand(program) {
     program
         .command('start [agents...]')
@@ -13,8 +14,7 @@ export function registerStartCommand(program) {
         .option('--no-config', 'Skip installing/loading the handoff tmux config')
         .action(async (agents, options) => {
         if (!isTmuxAvailable()) {
-            console.error('tmux is not available. Install tmux (or use WSL on Windows) to use this command.');
-            process.exit(1);
+            throw new TmuxError(ErrorCode.TMUX_NOT_AVAILABLE, 'tmux is not available. Install tmux (or use WSL on Windows) to use this command.');
         }
         const workingDir = resolve(options.dir ?? process.cwd());
         await mkdir(join(workingDir, '.handoff'), { recursive: true });
@@ -36,16 +36,10 @@ export function registerStartCommand(program) {
                 // Non-fatal - proceed without custom config
             }
         }
-        try {
-            await createWorkspace(agentList, workingDir, handoffConfig, {
-                sessionName: options.session,
-                tmuxConfigPath,
-            });
-        }
-        catch (err) {
-            console.error(err.message);
-            process.exit(1);
-        }
+        await createWorkspace(agentList, workingDir, handoffConfig, {
+            sessionName: options.session,
+            tmuxConfigPath,
+        });
     });
 }
 //# sourceMappingURL=start.js.map

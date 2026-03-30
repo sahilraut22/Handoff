@@ -3,6 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
+import { HandoffError } from './lib/errors.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerExportCommand } from './commands/export.js';
 import { registerAskCommand } from './commands/ask.js';
@@ -18,6 +19,7 @@ import { registerAttachCommand } from './commands/attach.js';
 import { registerKillCommand } from './commands/kill.js';
 import { registerBridgeCommand } from './commands/bridge.js';
 import { registerSetupCommand } from './commands/setup.js';
+import { registerBenchmarkCommand } from './commands/benchmark.js';
 import { registerDecideCommand } from './commands/decide.js';
 import { registerDecisionsCommand } from './commands/decisions.js';
 import { registerValidateCommand } from './commands/validate.js';
@@ -30,7 +32,8 @@ const program = new Command();
 program
   .name('handoff')
   .description('Seamless context transfer between AI coding agents')
-  .version(pkg.version);
+  .version(pkg.version)
+  .option('--verbose', 'Enable debug logging');
 
 // Context transfer commands
 registerInitCommand(program);
@@ -64,5 +67,24 @@ registerBridgeCommand(program);
 
 // Setup / diagnostics
 registerSetupCommand(program);
+registerBenchmarkCommand(program);
 
-program.parse();
+async function main(): Promise<void> {
+  try {
+    await program.parseAsync();
+  } catch (err) {
+    if (err instanceof HandoffError) {
+      console.error(err.format());
+      process.exit(1);
+    }
+    // Unexpected / system error
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Unexpected error: ${message}`);
+    if (process.env['HANDOFF_LOG_LEVEL'] === 'debug' && err instanceof Error && err.stack) {
+      console.error(err.stack);
+    }
+    process.exit(2);
+  }
+}
+
+main();

@@ -3,7 +3,7 @@
  * Handles the YAML frontmatter block at the top of HANDOFF.md files.
  */
 
-import type { HandoffFrontmatter, ValidationResult, ValidationError } from '../types/index.js';
+import type { HandoffFrontmatter, ProtocolValidationResult, ProtocolValidationError } from '../types/index.js';
 
 // --- Frontmatter parsing ---
 
@@ -153,8 +153,8 @@ function isValidSemver(value: string): boolean {
  * Validate a HANDOFF.md string against the protocol spec.
  * Returns a ValidationResult with all errors and warnings.
  */
-export function validateHandoff(markdown: string): ValidationResult {
-  const errors: ValidationError[] = [];
+export function validateHandoff(markdown: string): ProtocolValidationResult {
+  const errors: ProtocolValidationError[] = [];
 
   // Check frontmatter exists
   if (!markdown.startsWith('---')) {

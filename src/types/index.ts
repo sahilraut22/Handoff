@@ -156,15 +156,15 @@ export interface HandoffFrontmatter {
   decisions_included?: number;
 }
 
-export interface ValidationError {
+export interface ProtocolValidationError {
   field: string;
   message: string;
   severity: 'error' | 'warning';
 }
 
-export interface ValidationResult {
+export interface ProtocolValidationResult {
   valid: boolean;
-  errors: ValidationError[];
+  errors: ProtocolValidationError[];
 }
 
 // --- Main config ---

@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { HANDOFF_SCHEMA } from '../lib/schema.js';
+import { FileError, ErrorCode } from '../lib/errors.js';
 
 export function registerSchemaCommand(program: Command): void {
   program
@@ -13,7 +14,13 @@ export function registerSchemaCommand(program: Command): void {
 
       if (options.output) {
         const outputPath = resolve(options.output);
-        await writeFile(outputPath, schemaJson, 'utf-8');
+        try {
+          await writeFile(outputPath, schemaJson, 'utf-8');
+        } catch (err) {
+          throw new FileError(ErrorCode.FILE_WRITE_ERROR,
+            `Failed to write schema to ${outputPath}: ${(err as Error).message}`,
+            { cause: err as Error });
+        }
         console.log(`Schema written to ${outputPath}`);
       } else {
         console.log(schemaJson);

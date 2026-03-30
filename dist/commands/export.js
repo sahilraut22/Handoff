@@ -7,6 +7,8 @@ import { compressChanges, extractQueryKeywords } from '../lib/compress.js';
 import { loadAllDecisions } from '../lib/decisions.js';
 import { generateInteropOutput } from '../lib/interop.js';
 import { loadAgentState, saveAgentState, getAgentKnowledge, updateAgentKnowledge, computeDelta, } from '../lib/agent-state.js';
+import { SessionError, HandoffValidationError, FileError, ErrorCode } from '../lib/errors.js';
+import { redactSecrets, validateHandoffContent } from '../lib/security.js';
 export function registerExportCommand(program) {
     program
         .command('export')
@@ -30,8 +32,7 @@ export function registerExportCommand(program) {
         const validFormats = ['markdown', 'json', 'claude', 'agents'];
         const outputFormat = options.format ?? 'markdown';
         if (!validFormats.includes(outputFormat)) {
-            console.error(`Invalid format: ${outputFormat}. Must be one of: ${validFormats.join(', ')}`);
-            process.exit(1);
+            throw new HandoffValidationError(ErrorCode.INVALID_FORMAT, `Invalid format: ${outputFormat}.`);
         }
         // Read session
         let session;
@@ -40,8 +41,7 @@ export function registerExportCommand(program) {
             session = JSON.parse(sessionContent);
         }
         catch {
-            console.error('No active session. Run `handoff init` first.');
-            process.exit(1);
+            throw new SessionError(ErrorCode.SESSION_NOT_FOUND, 'No active session.');
         }
         const config = await loadConfig(workingDir);
         // Walk and hash current files
@@ -94,7 +94,7 @@ export function registerExportCommand(program) {
             for (const memFile of config.memory_files) {
                 try {
                     const content = await readFile(join(workingDir, memFile), 'utf-8');
-                    memoryContents[memFile] = content;
+                    memoryContents[memFile] = redactSecrets(content);
                 }
                 catch {
                     // Memory file doesn't exist, skip
@@ -153,10 +153,21 @@ export function registerExportCommand(program) {
             output = generateHandoffMarkdown(context);
         }
         const outputPath = options.output ?? join(workingDir, defaultFilename);
-        await writeFile(outputPath, output, 'utf-8');
+        validateHandoffContent(output);
+        try {
+            await writeFile(outputPath, output, 'utf-8');
+        }
+        catch (err) {
+            throw new FileError(ErrorCode.FILE_WRITE_ERROR, `Failed to write output to ${outputPath}: ${err.message}`, { cause: err });
+        }
         // Update session
         session.last_export = new Date().toISOString();
-        await writeFile(join(handoffDir, 'session.json'), JSON.stringify(session, null, 2), 'utf-8');
+        try {
+            await writeFile(join(handoffDir, 'session.json'), JSON.stringify(session, null, 2), 'utf-8');
+        }
+        catch {
+            // Non-fatal: export succeeded, session update failed
+        }
         // Print summary
         const modified = changes.filter((c) => c.type === 'modified').length;
         const added = changes.filter((c) => c.type === 'added').length;

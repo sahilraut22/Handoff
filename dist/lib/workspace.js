@@ -1,5 +1,8 @@
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { SessionError, TmuxError, AgentError, ErrorCode } from './errors.js';
+import { logger } from './logger.js';
+import { sanitizeAgentName } from './security.js';
 import { hasSession, newSession, splitPane, killPane, killSession, selectPane, selectLayout, attachSession, resizePane, setPaneTitle, sendKeys, sourceConfig, } from './tmux.js';
 import { getAgentConfig } from './agents.js';
 const DEFAULT_SESSION_NAME = 'handoff';
@@ -32,7 +35,7 @@ function pickLayout(agentCount) {
 export async function createWorkspace(agents, workingDir, config, options) {
     const sessionName = options?.sessionName ?? DEFAULT_SESSION_NAME;
     if (hasSession(sessionName)) {
-        throw new Error(`Session '${sessionName}' already exists. Use 'handoff attach' to reconnect or 'handoff kill --force' to destroy it.`);
+        throw new TmuxError(ErrorCode.TMUX_SESSION_NOT_FOUND, `Session '${sessionName}' already exists. Use 'handoff attach' to reconnect or 'handoff kill --force' to destroy it.`, { recoveryHint: "Run 'handoff attach' to reconnect or 'handoff kill --force' to destroy it." });
     }
     // Create detached session, capture first pane ID
     const firstPaneId = newSession(sessionName, { detached: true, startDir: workingDir });
@@ -46,6 +49,10 @@ export async function createWorkspace(agents, workingDir, config, options) {
         working_dir: workingDir,
         panes: [],
     };
+    // Validate agent names before proceeding
+    for (const agent of agents) {
+        sanitizeAgentName(agent);
+    }
     if (agents.length === 0) {
         // No agents - just a control pane
         setPaneTitle(CONTROL_PANE_LABEL, firstPaneId);
@@ -56,6 +63,7 @@ export async function createWorkspace(agents, workingDir, config, options) {
     }
     // First agent gets the initial pane
     const firstAgent = agents[0];
+    logger.debug('Creating workspace pane', { agent: firstAgent, pane: firstPaneId });
     setPaneTitle(firstAgent, firstPaneId);
     sendKeys(firstPaneId, resolveAgentCommand(firstAgent, config));
     state.panes.push({ agent_name: firstAgent, pane_id: firstPaneId, label: firstAgent });
@@ -94,15 +102,16 @@ export async function createWorkspace(agents, workingDir, config, options) {
     attachSession(sessionName);
 }
 export async function addAgentToWorkspace(agentName, workingDir, config) {
+    sanitizeAgentName(agentName);
     const state = await loadWorkspaceState(workingDir);
     if (!state) {
-        throw new Error("No workspace found. Run 'handoff start' first.");
+        throw new SessionError(ErrorCode.SESSION_NOT_FOUND, "No workspace found.", { recoveryHint: "Run 'handoff start' first." });
     }
     if (state.panes.some((p) => p.agent_name === agentName)) {
-        throw new Error(`Agent '${agentName}' is already in the workspace.`);
+        throw new TmuxError(ErrorCode.TMUX_PANE_NOT_FOUND, `Agent '${agentName}' is already in the workspace.`);
     }
     if (!hasSession(state.session_name)) {
-        throw new Error(`Session '${state.session_name}' is not running. Run 'handoff start' to create a new workspace.`);
+        throw new TmuxError(ErrorCode.TMUX_SESSION_NOT_FOUND, `Session '${state.session_name}' is not running.`, { recoveryHint: "Run 'handoff start' to create a new workspace." });
     }
     // Find control pane to split from
     const controlPane = state.panes.find((p) => p.agent_name === CONTROL_PANE_LABEL);
@@ -123,11 +132,11 @@ export async function addAgentToWorkspace(agentName, workingDir, config) {
 export async function removeAgentFromWorkspace(agentName, workingDir, config) {
     const state = await loadWorkspaceState(workingDir);
     if (!state) {
-        throw new Error("No workspace found. Run 'handoff start' first.");
+        throw new SessionError(ErrorCode.SESSION_NOT_FOUND, "No workspace found.", { recoveryHint: "Run 'handoff start' first." });
     }
     const paneEntry = state.panes.find((p) => p.agent_name === agentName || p.label === agentName);
     if (!paneEntry) {
-        throw new Error(`Agent '${agentName}' not found in workspace.`);
+        throw new AgentError(ErrorCode.AGENT_NOT_FOUND, `Agent '${agentName}' not found in workspace.`);
     }
     // Try graceful exit
     const agentConfig = getAgentConfig(agentName, config.agents);

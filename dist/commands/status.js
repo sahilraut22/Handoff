@@ -8,6 +8,7 @@ import { formatDuration } from '../lib/markdown.js';
 import { readQueryLog } from '../lib/logger.js';
 import { loadWorkspaceState } from '../lib/workspace.js';
 import { boxTop, boxBottom, boxDivider, boxRow } from '../lib/ui.js';
+import { SessionError, ErrorCode } from '../lib/errors.js';
 const WIDTH = 65;
 export function registerStatusCommand(program) {
     program
@@ -24,8 +25,7 @@ export function registerStatusCommand(program) {
             session = JSON.parse(content);
         }
         catch {
-            console.error('No active session. Run `handoff init` first.');
-            process.exit(1);
+            throw new SessionError(ErrorCode.SESSION_NOT_FOUND, 'No active session.');
         }
         const config = await loadConfig(workingDir);
         const workspaceState = await loadWorkspaceState(workingDir);

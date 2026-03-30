@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { validateHandoff } from '../lib/protocol.js';
+import { FileError, ErrorCode } from '../lib/errors.js';
 
 export function registerValidateCommand(program: Command): void {
   program
@@ -16,9 +17,9 @@ export function registerValidateCommand(program: Command): void {
       try {
         content = await readFile(filePath, 'utf-8');
       } catch {
-        console.error(`Cannot read file: ${filePath}`);
-        console.error("Run 'handoff export' to generate a HANDOFF.md first.");
-        process.exit(1);
+        throw new FileError(ErrorCode.FILE_NOT_FOUND,
+          `Cannot read file: ${filePath}`,
+          { recoveryHint: "Run 'handoff export' to generate a HANDOFF.md first." });
       }
 
       const result = validateHandoff(content);

@@ -1,0 +1,36 @@
+export var ErrorCode;
+(function (ErrorCode) {
+    // Session (1xx)
+    ErrorCode["SESSION_NOT_FOUND"] = "E101";
+    ErrorCode["SESSION_CORRUPT"] = "E102";
+    ErrorCode["SESSION_EXPIRED"] = "E103";
+    // File (2xx)
+    ErrorCode["FILE_NOT_FOUND"] = "E201";
+    ErrorCode["FILE_READ_ERROR"] = "E202";
+    ErrorCode["FILE_WRITE_ERROR"] = "E203";
+    ErrorCode["PATH_TRAVERSAL"] = "E204";
+    ErrorCode["FILE_TOO_LARGE"] = "E205";
+    // Config (3xx)
+    ErrorCode["CONFIG_INVALID"] = "E301";
+    ErrorCode["CONFIG_MISSING_FIELD"] = "E302";
+    // Tmux (4xx)
+    ErrorCode["TMUX_NOT_AVAILABLE"] = "E401";
+    ErrorCode["TMUX_SESSION_NOT_FOUND"] = "E402";
+    ErrorCode["TMUX_PANE_NOT_FOUND"] = "E403";
+    ErrorCode["TMUX_COMMAND_FAILED"] = "E404";
+    // Compression (5xx)
+    ErrorCode["COMPRESSION_FAILED"] = "E501";
+    // Validation (6xx)
+    ErrorCode["VALIDATION_FAILED"] = "E601";
+    ErrorCode["INVALID_FORMAT"] = "E602";
+    ErrorCode["INVALID_STATUS"] = "E603";
+    // Agent (7xx)
+    ErrorCode["AGENT_NOT_FOUND"] = "E701";
+    ErrorCode["AGENT_STATE_CORRUPT"] = "E702";
+    // Security (8xx)
+    ErrorCode["PATH_OUTSIDE_WORKSPACE"] = "E801";
+    ErrorCode["INVALID_AGENT_NAME"] = "E802";
+    ErrorCode["SECRETS_DETECTED"] = "E803";
+    ErrorCode["CONTENT_TOO_LARGE"] = "E804";
+})(ErrorCode || (ErrorCode = {}));
+//# sourceMappingURL=error-codes.js.map

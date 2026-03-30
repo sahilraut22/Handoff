@@ -1,5 +1,6 @@
 import { getSessionPanes } from './tmux.js';
 import { findAgent } from './agents.js';
+import { TmuxError, ErrorCode } from './errors.js';
 const DEFAULT_SESSION = 'handoff';
 /**
  * Resolve a target identifier (label, agent name, or pane ID) to a tmux pane ID.
@@ -19,7 +20,7 @@ export function resolveTarget(identifier, sessionName) {
         const found = allPanes.find((p) => p.pane_id === identifier);
         if (found)
             return found.pane_id;
-        throw new Error(`Pane '${identifier}' not found in session '${session}'.`);
+        throw new TmuxError(ErrorCode.TMUX_PANE_NOT_FOUND, `Pane '${identifier}' not found in session '${session}'.`);
     }
     // 2. Pane title (label) match
     const byTitle = allPanes.find((p) => p.pane_title === identifier);
@@ -36,7 +37,7 @@ export function resolveTarget(identifier, sessionName) {
         return `  ${p.pane_id}${label} [${p.pane_current_command}]`;
     })
         .join('\n');
-    throw new Error(`Target '${identifier}' not found in session '${session}'.\n` +
+    throw new TmuxError(ErrorCode.TMUX_PANE_NOT_FOUND, `Target '${identifier}' not found in session '${session}'.\n` +
         (available ? `Available panes:\n${available}` : 'No panes found in session.'));
 }
 //# sourceMappingURL=resolve-target.js.map

@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { logger } from './logger.js';
+import { safePath } from './security.js';
 const DEFAULT_CONFIG = {
     exclude_patterns: [
         'node_modules',
@@ -31,7 +33,7 @@ async function readJsonFile(filePath) {
         return null;
     }
 }
-function mergeConfig(base, override) {
+function mergeConfig(base, override, workingDir = process.cwd()) {
     const merged = { ...base };
     if (Array.isArray(override.exclude_patterns)) {
         merged.exclude_patterns = [...new Set([...base.exclude_patterns, ...override.exclude_patterns])];
@@ -46,7 +48,18 @@ function mergeConfig(base, override) {
         merged.tmux_capture_timeout_ms = override.tmux_capture_timeout_ms;
     }
     if (Array.isArray(override.memory_files)) {
-        merged.memory_files = override.memory_files;
+        // Validate each memory file path is within the working directory
+        const safeFiles = override.memory_files.filter((f) => {
+            try {
+                safePath(workingDir, f);
+                return true;
+            }
+            catch {
+                logger.warn('Skipping unsafe memory_files entry', { path: f });
+                return false;
+            }
+        });
+        merged.memory_files = safeFiles;
     }
     if (typeof override.agents === 'object' && override.agents !== null && !Array.isArray(override.agents)) {
         merged.agents = { ...(base.agents ?? {}), ...override.agents };
@@ -61,12 +74,14 @@ export async function loadConfig(workingDir) {
     // User-level config: ~/.handoffrc
     const userConfig = await readJsonFile(join(homedir(), '.handoffrc'));
     if (userConfig) {
-        config = mergeConfig(config, userConfig);
+        logger.debug('Loaded user config', { source: '~/.handoffrc' });
+        config = mergeConfig(config, userConfig, workingDir);
     }
     // Project-level config: .handoff/config.json
     const projectConfig = await readJsonFile(join(workingDir, '.handoff', 'config.json'));
     if (projectConfig) {
-        config = mergeConfig(config, projectConfig);
+        logger.debug('Loaded project config', { source: '.handoff/config.json' });
+        config = mergeConfig(config, projectConfig, workingDir);
     }
     return config;
 }

@@ -7,6 +7,7 @@ import {
   formatDecisionMarkdown,
   formatDecisionsTable,
 } from '../lib/decisions.js';
+import { HandoffValidationError, SessionError, ErrorCode } from '../lib/errors.js';
 import type { DecisionStatus } from '../types/index.js';
 
 export function registerDecisionsCommand(program: Command): void {
@@ -37,8 +38,8 @@ export function registerDecisionsCommand(program: Command): void {
       if (options.status) {
         const validStatuses: DecisionStatus[] = ['accepted', 'proposed', 'superseded', 'deprecated'];
         if (!validStatuses.includes(options.status as DecisionStatus)) {
-          console.error(`Invalid status filter: ${options.status}`);
-          process.exit(1);
+          throw new HandoffValidationError(ErrorCode.INVALID_STATUS,
+            `Invalid status filter: ${options.status}.`);
         }
         decisions = decisions.filter((d) => d.status === options.status);
       }
@@ -72,9 +73,9 @@ export function registerDecisionsCommand(program: Command): void {
         const decision = await loadDecision(workingDir, id);
         console.log(formatDecisionMarkdown(decision));
       } catch {
-        console.error(`Decision '${id}' not found.`);
-        console.error("Use 'handoff decisions' to list all decisions.");
-        process.exit(1);
+        throw new SessionError(ErrorCode.SESSION_NOT_FOUND,
+          `Decision '${id}' not found.`,
+          { recoveryHint: "Use 'handoff decisions' to list all decisions." });
       }
     });
 }

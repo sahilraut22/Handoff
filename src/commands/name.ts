@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { isTmuxAvailable, setPaneTitle } from '../lib/tmux.js';
+import { TmuxError, ErrorCode } from '../lib/errors.js';
 
 export function registerNameCommand(program: Command): void {
   program
@@ -8,8 +9,8 @@ export function registerNameCommand(program: Command): void {
     .option('-p, --pane <id>', 'Target a specific pane by ID instead of the current pane')
     .action((label: string, options: { pane?: string }) => {
       if (!isTmuxAvailable()) {
-        console.error('tmux is not available. Start a tmux session to use this command.');
-        process.exit(1);
+        throw new TmuxError(ErrorCode.TMUX_NOT_AVAILABLE,
+          'tmux is not available. Start a tmux session to use this command.');
       }
 
       setPaneTitle(label, options.pane);

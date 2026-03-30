@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { generateDecisionId, saveDecision, updateDecisionStatus } from '../lib/decisions.js';
+import { HandoffValidationError, ErrorCode } from '../lib/errors.js';
 export function registerDecideCommand(program) {
     program
         .command('decide <title>')
@@ -16,8 +17,7 @@ export function registerDecideCommand(program) {
         const workingDir = resolve(process.cwd());
         const validStatuses = ['accepted', 'proposed', 'superseded', 'deprecated'];
         if (!validStatuses.includes(options.status)) {
-            console.error(`Invalid status: ${options.status}. Must be one of: ${validStatuses.join(', ')}`);
-            process.exit(1);
+            throw new HandoffValidationError(ErrorCode.INVALID_STATUS, `Invalid status: ${options.status}.`);
         }
         const id = generateDecisionId();
         const decision = {

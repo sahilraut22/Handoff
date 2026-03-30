@@ -137,14 +137,14 @@ export interface HandoffFrontmatter {
     priority_files?: string[];
     decisions_included?: number;
 }
-export interface ValidationError {
+export interface ProtocolValidationError {
     field: string;
     message: string;
     severity: 'error' | 'warning';
 }
-export interface ValidationResult {
+export interface ProtocolValidationResult {
     valid: boolean;
-    errors: ValidationError[];
+    errors: ProtocolValidationError[];
 }
 export interface HandoffConfig {
     exclude_patterns: string[];

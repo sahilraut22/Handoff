@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { resolve } from 'node:path';
 import { generateDecisionId, saveDecision, loadDecision, updateDecisionStatus } from '../lib/decisions.js';
+import { HandoffValidationError, ErrorCode } from '../lib/errors.js';
 import type { Decision } from '../types/index.js';
 
 export function registerDecideCommand(program: Command): void {
@@ -32,8 +33,8 @@ export function registerDecideCommand(program: Command): void {
 
       const validStatuses = ['accepted', 'proposed', 'superseded', 'deprecated'];
       if (!validStatuses.includes(options.status)) {
-        console.error(`Invalid status: ${options.status}. Must be one of: ${validStatuses.join(', ')}`);
-        process.exit(1);
+        throw new HandoffValidationError(ErrorCode.INVALID_STATUS,
+          `Invalid status: ${options.status}.`);
       }
 
       const id = generateDecisionId();

@@ -5,6 +5,7 @@ import { isTmuxAvailable, listPanes, typeTextAndSubmit, capturePaneLines, waitFo
 import { findAgent, detectAgents, buildPromptWithContext } from '../lib/agents.js';
 import { appendQueryLog } from '../lib/logger.js';
 import { loadConfig } from '../lib/config.js';
+import { TmuxError, AgentError, ErrorCode } from '../lib/errors.js';
 import type { Session, QueryLogEntry } from '../types/index.js';
 
 export function registerAskCommand(program: Command): void {
@@ -23,8 +24,8 @@ export function registerAskCommand(program: Command): void {
       const handoffDir = join(workingDir, '.handoff');
 
       if (!isTmuxAvailable()) {
-        console.error('tmux is not available. Start a tmux session to use this command.');
-        process.exit(1);
+        throw new TmuxError(ErrorCode.TMUX_NOT_AVAILABLE,
+          'tmux is not available. Start a tmux session to use this command.');
       }
 
       const config = await loadConfig(workingDir);
@@ -37,17 +38,17 @@ export function registerAskCommand(program: Command): void {
       if (options.pane) {
         const pane = panes.find((p) => p.pane_id === options.pane);
         if (!pane) {
-          console.error(`Pane '${options.pane}' not found.`);
-          listAvailablePanes(panes);
-          process.exit(1);
+          const available = detectAgents(panes).map((a) => `  ${a.name} (pane ${a.pane.pane_id})`).join('\n');
+          throw new TmuxError(ErrorCode.TMUX_PANE_NOT_FOUND,
+            `Pane '${options.pane}' not found.` + (available ? `\nAvailable agents:\n${available}` : ''));
         }
         targetPaneId = pane.pane_id;
       } else {
         const agent = findAgent(agentName, panes);
         if (!agent) {
-          console.error(`Agent '${agentName}' not found.`);
-          listAvailablePanes(panes);
-          process.exit(1);
+          const available = detectAgents(panes).map((a) => `  ${a.name} (pane ${a.pane.pane_id})`).join('\n');
+          throw new AgentError(ErrorCode.AGENT_NOT_FOUND,
+            `Agent '${agentName}' not found.` + (available ? `\nAvailable agents:\n${available}` : ''));
         }
         targetPaneId = agent.pane.pane_id;
       }
@@ -95,17 +96,4 @@ export function registerAskCommand(program: Command): void {
         // No session, skip update
       }
     });
-}
-
-function listAvailablePanes(panes: ReturnType<typeof listPanes>): void {
-  const agents = detectAgents(panes);
-  if (agents.length > 0) {
-    console.error('\nAvailable agents:');
-    for (const a of agents) {
-      console.error(`  ${a.name} (pane ${a.pane.pane_id})`);
-    }
-  } else {
-    console.error('\nNo agents detected. Use `handoff list` to see all panes.');
-    console.error('Use `handoff name <label>` to label a pane, then reference it by label.');
-  }
 }

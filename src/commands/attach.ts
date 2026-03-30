@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { isTmuxAvailable, hasSession, attachSession } from '../lib/tmux.js';
+import { TmuxError, ErrorCode } from '../lib/errors.js';
 
 export function registerAttachCommand(program: Command): void {
   program
@@ -8,20 +9,14 @@ export function registerAttachCommand(program: Command): void {
     .option('-s, --session <name>', 'tmux session name', 'handoff')
     .action((options: { session: string }) => {
       if (!isTmuxAvailable()) {
-        console.error('tmux is not available.');
-        process.exit(1);
+        throw new TmuxError(ErrorCode.TMUX_NOT_AVAILABLE, 'tmux is not available.');
       }
 
       if (!hasSession(options.session)) {
-        console.error(`Session '${options.session}' not found. Run 'handoff start' to create one.`);
-        process.exit(1);
+        throw new TmuxError(ErrorCode.TMUX_SESSION_NOT_FOUND,
+          `Session '${options.session}' not found.`);
       }
 
-      try {
-        attachSession(options.session);
-      } catch (err) {
-        console.error((err as Error).message);
-        process.exit(1);
-      }
+      attachSession(options.session);
     });
 }

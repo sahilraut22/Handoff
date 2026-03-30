@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { resolve } from 'node:path';
 import { isTmuxAvailable, selectLayout } from '../lib/tmux.js';
 import { loadWorkspaceState } from '../lib/workspace.js';
+import { TmuxError, HandoffValidationError, ErrorCode } from '../lib/errors.js';
 
 const LAYOUT_MAP: Record<string, string> = {
   grid:       'tiled',
@@ -17,26 +18,21 @@ export function registerLayoutCommand(program: Command): void {
     .option('-d, --dir <path>', 'Working directory (default: current directory)')
     .action(async (style: string, options: { dir?: string }) => {
       if (!isTmuxAvailable()) {
-        console.error('tmux is not available.');
-        process.exit(1);
+        throw new TmuxError(ErrorCode.TMUX_NOT_AVAILABLE, 'tmux is not available.');
       }
 
       const tmuxLayout = LAYOUT_MAP[style];
       if (!tmuxLayout) {
-        console.error(`Unknown layout style '${style}'. Choose from: ${Object.keys(LAYOUT_MAP).join(', ')}`);
-        process.exit(1);
+        throw new HandoffValidationError(ErrorCode.INVALID_FORMAT,
+          `Unknown layout style '${style}'.`,
+          { recoveryHint: `Choose from: ${Object.keys(LAYOUT_MAP).join(', ')}` });
       }
 
       const workingDir = resolve(options.dir ?? process.cwd());
       const state = await loadWorkspaceState(workingDir);
       const sessionName = state?.session_name ?? 'handoff';
 
-      try {
-        selectLayout(tmuxLayout, sessionName);
-        console.log(`Layout changed to '${style}'.`);
-      } catch (err) {
-        console.error((err as Error).message);
-        process.exit(1);
-      }
+      selectLayout(tmuxLayout, sessionName);
+      console.log(`Layout changed to '${style}'.`);
     });
 }
