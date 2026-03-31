@@ -9,6 +9,24 @@ import { getAgentConfig } from './agents.js';
 const DEFAULT_SESSION_NAME = 'handoff';
 const CONTROL_PANE_LABEL = 'control';
 const CONTROL_PANE_HEIGHT = 8;
+const TITLE_STABILIZE_DELAYS_MS = [300, 1200];
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+async function stabilizePaneTitle(paneId, title) {
+    // Some shells/TUI apps emit terminal title escape sequences during startup.
+    // Re-assert pane titles shortly after launch so agent labels stay fixed.
+    for (const delayMs of TITLE_STABILIZE_DELAYS_MS) {
+        await sleep(delayMs);
+        try {
+            setPaneTitle(title, paneId);
+        }
+        catch {
+            // Pane may be closed; best-effort only.
+            return;
+        }
+    }
+}
 export async function loadWorkspaceState(workingDir) {
     try {
         const content = await readFile(join(workingDir, '.handoff', 'workspace.json'), 'utf-8');
@@ -68,6 +86,7 @@ export async function createWorkspace(agents, workingDir, config, options) {
     setPaneTitle(firstAgent, firstPaneId);
     sendKeys(firstPaneId, resolveAgentCommand(firstAgent, config));
     state.panes.push({ agent_name: firstAgent, pane_id: firstPaneId, label: firstAgent });
+    const titleStabilizers = [stabilizePaneTitle(firstPaneId, firstAgent)];
     let lastPaneId = firstPaneId;
     // Remaining agents each get a new split pane
     for (let i = 1; i < agents.length; i++) {
@@ -76,12 +95,14 @@ export async function createWorkspace(agents, workingDir, config, options) {
         setPaneTitle(agentName, newPaneId);
         sendKeys(newPaneId, resolveAgentCommand(agentName, config));
         state.panes.push({ agent_name: agentName, pane_id: newPaneId, label: agentName });
+        titleStabilizers.push(stabilizePaneTitle(newPaneId, agentName));
         lastPaneId = newPaneId;
     }
     // Create control pane (split vertically from the last agent pane)
     const controlPaneId = splitPane(lastPaneId, { startDir: workingDir });
     setPaneTitle(CONTROL_PANE_LABEL, controlPaneId);
     state.panes.push({ agent_name: CONTROL_PANE_LABEL, pane_id: controlPaneId, label: CONTROL_PANE_LABEL });
+    titleStabilizers.push(stabilizePaneTitle(controlPaneId, CONTROL_PANE_LABEL));
     // Apply layout
     const layout = pickLayout(agents.length);
     try {
@@ -99,6 +120,7 @@ export async function createWorkspace(agents, workingDir, config, options) {
     }
     // Focus control pane
     selectPane(controlPaneId);
+    await Promise.all(titleStabilizers);
     await saveWorkspaceState(workingDir, state);
     // Initialize file-based IPC directory and register agent presences
     const ipcDir = join(workingDir, '.handoff', 'ipc');
@@ -126,6 +148,7 @@ export async function addAgentToWorkspace(agentName, workingDir, config) {
     const newPaneId = splitPane(splitTarget, { startDir: workingDir });
     setPaneTitle(agentName, newPaneId);
     sendKeys(newPaneId, resolveAgentCommand(agentName, config));
+    await stabilizePaneTitle(newPaneId, agentName);
     state.panes.push({ agent_name: agentName, pane_id: newPaneId, label: agentName });
     // Re-apply tiled layout
     try {

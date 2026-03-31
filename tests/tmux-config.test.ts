@@ -30,7 +30,7 @@ describe('generateTmuxConfig', () => {
   it('includes pane label settings by default', () => {
     const config = generateTmuxConfig();
     expect(config).toContain('set -g pane-border-status top');
-    expect(config).toContain('pane-border-format');
+    expect(config).toContain('#{?@handoff_label,#{@handoff_label},#{pane_title}}');
     expect(config).toContain('pane-active-border-style');
   });
 
@@ -80,5 +80,22 @@ describe('generateTmuxConfig', () => {
   it('includes heavy borders directive', () => {
     const config = generateTmuxConfig();
     expect(config).toContain('pane-border-lines heavy');
+  });
+
+  it('uses quiet compatibility flags for terminal passthrough settings', () => {
+    const config = generateTmuxConfig();
+    expect(config).toContain('set -gq allow-passthrough off');
+    expect(config).toContain('set -gq set-clipboard off');
+    expect(config).toContain('set -gq focus-events off');
+  });
+
+  it('disables automatic/window title renaming to keep agent labels fixed', () => {
+    const config = generateTmuxConfig();
+    expect(config).toContain('set -gq allow-rename off');
+    expect(config).toContain('setw -gq allow-rename off');
+    expect(config).toContain('set -gq automatic-rename off');
+    expect(config).toContain('setw -gq automatic-rename off');
+    expect(config).toContain('set -gq allow-set-title off');
+    expect(config).toContain('set -gq set-titles off');
   });
 });

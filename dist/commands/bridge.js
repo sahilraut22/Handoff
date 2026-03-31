@@ -1,5 +1,5 @@
 import { resolve, join } from 'node:path';
-import { isTmuxAvailable, hasSession, getSessionPanes, listPanes, setPaneTitle, splitPane, selectLayout, getCurrentPaneId, getPaneInfo, capturePaneLines, capturePane, typeText, sendSpecialKey, } from '../lib/tmux.js';
+import { isTmuxAvailable, hasSession, getSessionPanes, listPanes, setPaneTitle, splitPane, selectLayout, getCurrentPaneId, getPaneInfo, capturePaneLines, capturePane, typeText, typeTextAndSubmit, sendSpecialKey, } from '../lib/tmux.js';
 import { resolveTarget } from '../lib/resolve-target.js';
 import { resolveKey } from '../lib/key-map.js';
 import { recordRead, checkReadGuard } from '../lib/read-guard.js';
@@ -17,6 +17,18 @@ function requireTmux() {
     }
 }
 export function registerBridgeCommand(program) {
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const stabilizePaneTitle = async (paneId, label) => {
+        for (const delayMs of [300, 1200]) {
+            await sleep(delayMs);
+            try {
+                setPaneTitle(label, paneId);
+            }
+            catch {
+                return;
+            }
+        }
+    };
     const bridge = program
         .command('bridge')
         .description('Low-level IPC bridge for agent-to-agent communication via tmux panes.');
@@ -123,7 +135,7 @@ export function registerBridgeCommand(program) {
         .description('Send a message to another agent pane with auto-prepended sender metadata.')
         .option('-s, --session <name>', 'tmux session name', 'handoff')
         .option('--from <label>', 'Override sender label (default: current pane title or ID)')
-        .action((target, textParts, options) => {
+        .action(async (target, textParts, options) => {
         requireTmux();
         const paneId = resolveTarget(target, options.session);
         // Determine sender identity
@@ -141,8 +153,7 @@ export function registerBridgeCommand(program) {
         }
         const text = textParts.join(' ');
         const formatted = `[from: ${senderLabel}] ${text}`;
-        typeText(paneId, formatted);
-        sendSpecialKey(paneId, 'Enter');
+        await typeTextAndSubmit(paneId, formatted);
     });
     // bridge spawn <agent>
     bridge
@@ -182,6 +193,7 @@ export function registerBridgeCommand(program) {
         // Start the agent
         typeText(newPaneId, agentConfig.command);
         sendSpecialKey(newPaneId, 'Enter');
+        await stabilizePaneTitle(newPaneId, agentName);
         // Re-apply tiled layout if multiple panes
         try {
             selectLayout('tiled', options.session);

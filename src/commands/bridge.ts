@@ -13,6 +13,7 @@ import {
   capturePaneLines,
   capturePane,
   typeText,
+  typeTextAndSubmit,
   sendSpecialKey,
 } from '../lib/tmux.js';
 import { resolveTarget } from '../lib/resolve-target.js';
@@ -43,6 +44,18 @@ function requireTmux(): void {
 }
 
 export function registerBridgeCommand(program: Command): void {
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+  const stabilizePaneTitle = async (paneId: string, label: string): Promise<void> => {
+    for (const delayMs of [300, 1200]) {
+      await sleep(delayMs);
+      try {
+        setPaneTitle(label, paneId);
+      } catch {
+        return;
+      }
+    }
+  };
+
   const bridge = program
     .command('bridge')
     .description('Low-level IPC bridge for agent-to-agent communication via tmux panes.');
@@ -158,7 +171,7 @@ export function registerBridgeCommand(program: Command): void {
     .description('Send a message to another agent pane with auto-prepended sender metadata.')
     .option('-s, --session <name>', 'tmux session name', 'handoff')
     .option('--from <label>', 'Override sender label (default: current pane title or ID)')
-    .action((target: string, textParts: string[], options: { session: string; from?: string }) => {
+    .action(async (target: string, textParts: string[], options: { session: string; from?: string }) => {
       requireTmux();
       const paneId = resolveTarget(target, options.session);
 
@@ -177,8 +190,7 @@ export function registerBridgeCommand(program: Command): void {
 
       const text = textParts.join(' ');
       const formatted = `[from: ${senderLabel}] ${text}`;
-      typeText(paneId, formatted);
-      sendSpecialKey(paneId, 'Enter');
+      await typeTextAndSubmit(paneId, formatted);
     });
 
   // bridge spawn <agent>
@@ -226,6 +238,7 @@ export function registerBridgeCommand(program: Command): void {
       // Start the agent
       typeText(newPaneId, agentConfig.command);
       sendSpecialKey(newPaneId, 'Enter');
+      await stabilizePaneTitle(newPaneId, agentName);
 
       // Re-apply tiled layout if multiple panes
       try {

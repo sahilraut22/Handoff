@@ -497,6 +497,37 @@ handoff bridge message claude "The auth middleware is ready for review in src/au
 handoff bridge message codex "Please generate tests for src/greet.js"
 ```
 
+### Hands-free Claude <-> Codex demo visible in tmux panes
+
+Start the workspace first (keep tmux open):
+
+```bash
+handoff start claude codex
+```
+
+In another terminal, run:
+
+```bash
+npm run build
+node scripts/demo-tmux-visible-chat.mjs --session handoff
+```
+
+What it does automatically:
+- validates tmux bridge connectivity
+- injects a prompt into Codex pane as if sent by Claude
+- injects a prompt into Claude pane as if sent by Codex
+
+Result: communication is visible directly inside the live tmux panes, and each agent can reply in place.
+
+### Hands-free file-based IPC demo (no tmux required)
+
+If you want to demo IPC queues/inboxes instead of pane injection:
+
+```bash
+npm run build
+node scripts/demo-multi-agent-ipc.mjs --dir .
+```
+
 ### Read agent output
 
 ```bash
@@ -522,6 +553,15 @@ No `Ctrl+B` prefix needed:
 handoff kill
 handoff kill --force   # skip confirmation
 ```
+
+### Known conflicts / gotchas for demos
+
+- Pane labels drifting (`codex` -> folder name): fixed by the generated tmux config now disabling auto rename/title takeover. Re-run `handoff setup`, then restart tmux server (`tmux kill-server`) before demoing.
+- If labels are still wrong in a running workspace, run `handoff relabel` to reapply saved pane labels immediately.
+- Pane injection uses Enter in target panes. If an agent is not running there, text may execute in the shell instead of being handled as an agent message.
+- First-time Codex in a directory may show a trust prompt ("Do you trust the contents..."). Accept it once manually in that pane before running pane-visible demo automation.
+- Presence can appear offline after ~30s if heartbeats are not refreshed. For long demos, run `handoff bridge heartbeat <agent>` periodically (or rerun the demo script which refreshes both).
+- `Alt+w` closes the current pane by design in handoff tmux bindings. During demos, avoid hitting it accidentally.
 
 ---
 

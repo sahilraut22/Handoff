@@ -30,6 +30,24 @@ export function generateTmuxConfig(options?: Partial<TmuxConfig>): string {
   lines.push('set -g base-index 1');
   lines.push('setw -g pane-base-index 1');
   lines.push('set -g renumber-windows on');
+  // Keep names stable after handoff assigns them (agents/control).
+  lines.push('set -gq allow-rename off');
+  lines.push('setw -gq allow-rename off');
+  lines.push('set -gq automatic-rename off');
+  lines.push('setw -gq automatic-rename off');
+  // Prevent OSC title updates from shells/apps from mutating pane labels.
+  lines.push('set -gq allow-set-title off');
+  lines.push('set -gq set-titles off');
+  lines.push('');
+
+  // Windows Terminal / WSL compatibility
+  // Prevents raw DA1/OSC terminal capability query responses from leaking
+  // into the shell when tmux exits (visible as ^[[?61;...c garbage)
+  lines.push('# Windows Terminal / WSL: suppress terminal capability query passthrough');
+  // Use -q so unknown options on older tmux versions don't abort source-file.
+  lines.push('set -gq allow-passthrough off');
+  lines.push('set -gq set-clipboard off');
+  lines.push('set -gq focus-events off');
   lines.push('');
 
   // Mouse
@@ -47,7 +65,7 @@ export function generateTmuxConfig(options?: Partial<TmuxConfig>): string {
   if (cfg.paneLabels) {
     lines.push('# Pane labels in borders');
     lines.push('set -g pane-border-status top');
-    lines.push('set -g pane-border-format " #{pane_index}: #{pane_title} "');
+    lines.push('set -g pane-border-format " #{pane_index}: #{?@handoff_label,#{@handoff_label},#{pane_title}} "');
     lines.push('set -g pane-active-border-style "fg=red,bold"');
     lines.push('set -g pane-border-style "fg=colour240"');
     lines.push('');

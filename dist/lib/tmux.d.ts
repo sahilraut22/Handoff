@@ -42,7 +42,7 @@ export declare function sendSpecialKey(paneId: string, ...keys: string[]): void;
  * input handler active before the Enter keystroke arrives — otherwise
  * TUI apps in non-active panes ignore the Enter even if text was typed.
  */
-export declare function typeTextAndSubmit(paneId: string, text: string): void;
+export declare function typeTextAndSubmit(paneId: string, text: string): Promise<void>;
 /**
  * Capture the last N lines from a pane's scrollback buffer.
  * Uses negative -S value to capture from the end.

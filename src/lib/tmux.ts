@@ -94,6 +94,13 @@ export function findPane(identifier: string): TmuxPane | undefined {
 }
 
 export function setPaneTitle(title: string, paneId?: string): void {
+  // Store a dedicated immutable label for handoff UI rendering.
+  // This avoids shell/TUI title escape sequences mutating visible agent labels.
+  const optionArgs = paneId
+    ? ['set-option', '-pt', paneId, '@handoff_label', title]
+    : ['set-option', '-p', '@handoff_label', title];
+  runTmux(optionArgs);
+
   const args = ['select-pane', '-T', title];
   if (paneId) {
     args.push('-t', paneId);
@@ -267,11 +274,32 @@ export function sendSpecialKey(paneId: string, ...keys: string[]): void {
  * input handler active before the Enter keystroke arrives — otherwise
  * TUI apps in non-active panes ignore the Enter even if text was typed.
  */
-export function typeTextAndSubmit(paneId: string, text: string): void {
+export async function typeTextAndSubmit(paneId: string, text: string): Promise<void> {
+  const hasPendingInput = (paneSnapshot: string, inputText: string): boolean => {
+    const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pendingLine = new RegExp(`^\\s*>\\s*${escapeRegex(inputText)}\\s*$`);
+    const tailLines = paneSnapshot.split('\n').slice(-12);
+    return tailLines.some((line) => pendingLine.test(line.trimEnd()));
+  };
+  const settleDelayMs = Math.max(80, Math.min(2500, Math.floor(text.length / 40)));
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
   // Select the pane so its input handler is active, then type + submit.
   runTmux(['select-pane', '-t', paneId]);
   runTmux(['send-keys', '-t', paneId, '-l', '--', text]);
+  await sleep(settleDelayMs);
   runTmux(['send-keys', '-t', paneId, 'Enter']);
+  await sleep(120);
+
+  // If the input is still visibly pending in the prompt line, retry submit.
+  try {
+    const snapshot = runTmux(['capture-pane', '-p', '-t', paneId, '-S', '-40']);
+    if (hasPendingInput(snapshot, text)) {
+      runTmux(['send-keys', '-t', paneId, 'Enter']);
+    }
+  } catch {
+    // Best-effort fallback only.
+  }
 }
 
 /**

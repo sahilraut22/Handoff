@@ -44,7 +44,7 @@ export function registerAskCommand(program) {
         // Send text + Enter atomically in one WSL/tmux call to avoid timing gap
         console.log(`Sending to ${agentName} (pane ${targetPaneId})...`);
         const startMs = Date.now();
-        typeTextAndSubmit(targetPaneId, prompt);
+        await typeTextAndSubmit(targetPaneId, prompt);
         // Wait for response
         console.log(`Waiting for response (timeout: ${timeoutMs}ms)...`);
         const response = await waitForResponse(targetPaneId, timeoutMs);

@@ -25,6 +25,25 @@ import { getAgentConfig } from './agents.js';
 const DEFAULT_SESSION_NAME = 'handoff';
 const CONTROL_PANE_LABEL = 'control';
 const CONTROL_PANE_HEIGHT = 8;
+const TITLE_STABILIZE_DELAYS_MS = [300, 1200];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function stabilizePaneTitle(paneId: string, title: string): Promise<void> {
+  // Some shells/TUI apps emit terminal title escape sequences during startup.
+  // Re-assert pane titles shortly after launch so agent labels stay fixed.
+  for (const delayMs of TITLE_STABILIZE_DELAYS_MS) {
+    await sleep(delayMs);
+    try {
+      setPaneTitle(title, paneId);
+    } catch {
+      // Pane may be closed; best-effort only.
+      return;
+    }
+  }
+}
 
 export async function loadWorkspaceState(workingDir: string): Promise<WorkspaceState | null> {
   try {
@@ -104,6 +123,7 @@ export async function createWorkspace(
   setPaneTitle(firstAgent, firstPaneId);
   sendKeys(firstPaneId, resolveAgentCommand(firstAgent, config));
   state.panes.push({ agent_name: firstAgent, pane_id: firstPaneId, label: firstAgent });
+  const titleStabilizers: Promise<void>[] = [stabilizePaneTitle(firstPaneId, firstAgent)];
 
   let lastPaneId = firstPaneId;
 
@@ -114,6 +134,7 @@ export async function createWorkspace(
     setPaneTitle(agentName, newPaneId);
     sendKeys(newPaneId, resolveAgentCommand(agentName, config));
     state.panes.push({ agent_name: agentName, pane_id: newPaneId, label: agentName });
+    titleStabilizers.push(stabilizePaneTitle(newPaneId, agentName));
     lastPaneId = newPaneId;
   }
 
@@ -121,6 +142,7 @@ export async function createWorkspace(
   const controlPaneId = splitPane(lastPaneId, { startDir: workingDir });
   setPaneTitle(CONTROL_PANE_LABEL, controlPaneId);
   state.panes.push({ agent_name: CONTROL_PANE_LABEL, pane_id: controlPaneId, label: CONTROL_PANE_LABEL });
+  titleStabilizers.push(stabilizePaneTitle(controlPaneId, CONTROL_PANE_LABEL));
 
   // Apply layout
   const layout = pickLayout(agents.length);
@@ -139,6 +161,8 @@ export async function createWorkspace(
 
   // Focus control pane
   selectPane(controlPaneId);
+
+  await Promise.all(titleStabilizers);
 
   await saveWorkspaceState(workingDir, state);
 
@@ -183,6 +207,7 @@ export async function addAgentToWorkspace(
   const newPaneId = splitPane(splitTarget, { startDir: workingDir });
   setPaneTitle(agentName, newPaneId);
   sendKeys(newPaneId, resolveAgentCommand(agentName, config));
+  await stabilizePaneTitle(newPaneId, agentName);
 
   state.panes.push({ agent_name: agentName, pane_id: newPaneId, label: agentName });
 
