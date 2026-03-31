@@ -117,7 +117,7 @@ export interface Decision {
     supersedes?: string;
     agent?: string;
     confidence?: number;
-    source?: 'manual' | 'diff' | 'conversation' | 'commit';
+    source?: 'manual' | 'diff' | 'conversation' | 'commit' | 'state';
     source_location?: string;
     auto_extracted?: boolean;
 }
@@ -218,9 +218,20 @@ export interface ExtractedDecision {
     decision: string;
     alternatives: string[];
     confidence: number;
-    source: 'diff' | 'conversation' | 'commit';
+    source: 'diff' | 'conversation' | 'commit' | 'state';
     source_location?: string;
     tags: string[];
+}
+export interface TechSnapshot {
+    timestamp: string;
+    /** category -> list of detected tech names currently in use */
+    techs: Record<string, string[]>;
+}
+export interface TechStateHistory {
+    /** Full history per category: all techs ever seen, oldest first */
+    history: Record<string, string[]>;
+    /** Most recent snapshot */
+    last: TechSnapshot;
 }
 export interface MonitorConfig {
     agent: string;

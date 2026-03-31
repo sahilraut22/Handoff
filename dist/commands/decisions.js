@@ -1,5 +1,5 @@
 import { resolve } from 'node:path';
-import { loadAllDecisions, loadDecision, searchDecisions, formatDecisionMarkdown, formatDecisionsTable, } from '../lib/decisions.js';
+import { loadAllDecisions, loadDecision, searchDecisions, updateDecisionStatus, reviewPendingDecisions, formatDecisionMarkdown, formatDecisionsTable, } from '../lib/decisions.js';
 import { HandoffValidationError, SessionError, ErrorCode } from '../lib/errors.js';
 export function registerDecisionsCommand(program) {
     const decisionsCmd = program
@@ -55,6 +55,66 @@ export function registerDecisionsCommand(program) {
         catch {
             throw new SessionError(ErrorCode.SESSION_NOT_FOUND, `Decision '${id}' not found.`, { recoveryHint: "Use 'handoff decisions' to list all decisions." });
         }
+    });
+    // Subcommand: decisions review
+    decisionsCmd
+        .command('review')
+        .description('Review auto-extracted decisions pending approval')
+        .option('--accept-all', 'Accept all pending decisions without prompting')
+        .option('--reject-all', 'Reject (delete) all pending decisions without prompting')
+        .action(async (options) => {
+        const workingDir = resolve(process.cwd());
+        const pending = await reviewPendingDecisions(workingDir);
+        if (pending.length === 0) {
+            console.log('No pending decisions to review.');
+            console.log('Run `handoff export` or `handoff run <agent>` to extract decisions automatically.');
+            return;
+        }
+        if (options.acceptAll) {
+            for (const d of pending) {
+                await updateDecisionStatus(workingDir, d.id, 'accepted');
+            }
+            console.log(`Accepted ${pending.length} decision(s).`);
+            return;
+        }
+        if (options.rejectAll) {
+            const { unlink } = await import('node:fs/promises');
+            const { join } = await import('node:path');
+            for (const d of pending) {
+                await unlink(join(workingDir, '.handoff', 'decisions', `${d.id}.yaml`)).catch(() => undefined);
+            }
+            console.log(`Rejected ${pending.length} decision(s).`);
+            return;
+        }
+        // Interactive review: print each and prompt
+        const readline = await import('node:readline');
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const question = (prompt) => new Promise((res) => rl.question(prompt, res));
+        console.log(`\n${pending.length} pending decision(s) to review:\n`);
+        for (let i = 0; i < pending.length; i++) {
+            const d = pending[i];
+            console.log(`[${i + 1}/${pending.length}] ${formatDecisionMarkdown(d)}`);
+            console.log(`Confidence: ${Math.round((d.confidence ?? 0) * 100)}%  |  Source: ${d.source ?? 'unknown'}`);
+            console.log('');
+            const answer = await question('Accept? [y]es / [n]o / [s]kip all remaining: ');
+            const choice = answer.trim().toLowerCase();
+            if (choice === 'y' || choice === 'yes') {
+                await updateDecisionStatus(workingDir, d.id, 'accepted');
+                console.log('Accepted.\n');
+            }
+            else if (choice === 's') {
+                console.log('Skipping remaining decisions.');
+                break;
+            }
+            else {
+                const { unlink } = await import('node:fs/promises');
+                const { join } = await import('node:path');
+                await unlink(join(workingDir, '.handoff', 'decisions', `${d.id}.yaml`)).catch(() => undefined);
+                console.log('Rejected.\n');
+            }
+        }
+        rl.close();
+        console.log('Review complete. Run `handoff decisions` to see your journal.');
     });
 }
 //# sourceMappingURL=decisions.js.map

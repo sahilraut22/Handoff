@@ -22,6 +22,7 @@ import { extractDecisions } from '../lib/decision-extractor.js';
 import { saveExtractedDecisions } from '../lib/decisions.js';
 import { publishContext } from '../lib/context-protocol.js';
 import { initIpc } from '../lib/ipc.js';
+import { runStateDetection } from '../lib/state-decisions.js';
 import { access } from 'node:fs/promises';
 import type { HandoffContext } from '../types/index.js';
 
@@ -233,7 +234,7 @@ export function registerExportCommand(program: Command): void {
         }
       }
 
-      // Auto-extract decisions from diffs
+      // Auto-extract decisions from diffs (NLP)
       const allDiffText = changes
         .filter((c) => c.diff)
         .map((c) => `// File: ${c.path}\n${c.diff}`)
@@ -243,8 +244,17 @@ export function registerExportCommand(program: Command): void {
         if (extracted.length > 0) {
           const saved = await saveExtractedDecisions(workingDir, extracted, 0.7);
           if (saved.length > 0) {
-            console.log(`Auto-extracted ${saved.length} decision(s) from diffs. Run \`handoff decisions\` to review.`);
+            console.log(`Auto-extracted ${saved.length} decision(s) from diffs. Run \`handoff decisions review\` to approve.`);
           }
+        }
+      }
+
+      // Auto-detect decisions from project state changes (tech stack switching)
+      const stateDecisions = await runStateDetection(workingDir);
+      if (stateDecisions.length > 0) {
+        const saved = await saveExtractedDecisions(workingDir, stateDecisions, 0.6);
+        if (saved.length > 0) {
+          console.log(`Detected ${saved.length} tech stack change(s). Run \`handoff decisions review\` to approve.`);
         }
       }
 

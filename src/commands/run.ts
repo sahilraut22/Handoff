@@ -1,18 +1,18 @@
 import { Command } from 'commander';
 import { spawn } from 'node:child_process';
-import { resolve, join } from 'node:path';
+import { resolve } from 'node:path';
 import { AGENT_REGISTRY } from '../lib/agents.js';
 import { loadConfig } from '../lib/config.js';
-import { extractDecisions, formatExtractedForReview } from '../lib/decision-extractor.js';
+import { formatExtractedForReview } from '../lib/decision-extractor.js';
 import { saveExtractedDecisions } from '../lib/decisions.js';
-import { createLogMonitor } from '../lib/conversation-monitor.js';
+import { discoverAgentLogs, createLogMonitor } from '../lib/conversation-monitor.js';
 import { AgentError, ErrorCode } from '../lib/errors.js';
 import type { MonitorConfig } from '../types/index.js';
 
 export function registerRunCommand(program: Command): void {
   program
     .command('run <agent>')
-    .description('Run an AI agent with automatic context and decision monitoring')
+    .description('Run an AI agent with automatic decision monitoring after session ends')
     .option('-d, --dir <path>', 'Working directory (default: current directory)')
     .option('--dry-run', 'Show what would be captured without saving')
     .option('--min-confidence <n>', 'Minimum confidence threshold for saving decisions (0-1)', '0.7')
@@ -34,10 +34,8 @@ export function registerRunCommand(program: Command): void {
 
       await loadConfig(workingDir);
 
-      const capturedLines: string[] = [];
-
-      // Start log monitor for this agent
-      const logPaths = [join(process.env['HOME'] ?? process.env['USERPROFILE'] ?? '', `.${agentName}/logs`)];
+      // Discover log paths for this agent before launching
+      const logPaths = discoverAgentLogs(agentName);
       const monitorConfig: MonitorConfig = {
         agent: agentName,
         log_paths: logPaths,
@@ -51,45 +49,41 @@ export function registerRunCommand(program: Command): void {
       console.log(`Command: ${agentConfig.command}`);
       console.log('(Ctrl+C to exit)\n');
 
-      // Spawn the agent
+      // Spawn the agent with full TTY passthrough so interactive CLIs work correctly
       const parts = agentConfig.command.split(' ');
       const cmd = parts[0]!;
       const args = parts.slice(1);
 
       const child = spawn(cmd, args, {
         cwd: workingDir,
-        stdio: ['inherit', 'pipe', 'pipe'],
+        stdio: 'inherit',
         shell: true,
       });
 
-      // Intercept stdout for decision extraction
-      child.stdout?.on('data', (chunk: Buffer) => {
-        const text = chunk.toString('utf-8');
-        process.stdout.write(text);
-        capturedLines.push(text);
-      });
-
-      // Pass stderr through unchanged
-      child.stderr?.on('data', (chunk: Buffer) => {
-        process.stderr.write(chunk);
-      });
-
       // Wait for agent to exit
-      const exitCode = await new Promise<number>((resolve) => {
+      const exitCode = await new Promise<number>((resolve, reject) => {
         child.on('exit', (code) => resolve(code ?? 0));
-        child.on('error', () => resolve(1));
+        child.on('error', (err: NodeJS.ErrnoException) => {
+          if (err.code === 'ENOENT') {
+            reject(new AgentError(ErrorCode.AGENT_NOT_FOUND,
+              `Command not found: "${agentConfig.command}". Is ${agentConfig.name} installed?`,
+              { recoveryHint: `Install it first, then retry: handoff run ${agentName}` }));
+          } else {
+            reject(err);
+          }
+        });
       });
 
       logMonitor.stop();
 
-      // Extract decisions from captured output
-      const capturedText = capturedLines.join('');
-      const outputExtracted = extractDecisions(capturedText, 'conversation');
-      const logExtracted = logMonitor.getExtracted();
-      const allExtracted = [...outputExtracted, ...logExtracted];
+      // Extract decisions from log files captured during the session
+      const allExtracted = logMonitor.getExtracted();
 
       if (allExtracted.length === 0) {
         console.log('\nNo decisions detected in this session.');
+        if (logPaths.length === 0) {
+          console.log(`(No known log paths for ${agentName} — log monitoring not available)`);
+        }
       } else if (options.dryRun) {
         console.log('\n--- Dry run: decisions that would be saved ---');
         console.log(formatExtractedForReview(allExtracted.filter((d) => d.confidence >= minConfidence)));

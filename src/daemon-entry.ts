@@ -11,6 +11,8 @@ import { writePidFile, removePidFile } from './lib/daemon.js';
 import { hashAllFiles, computeChanges, walkFiles } from './lib/snapshot.js';
 import { generateHandoffMarkdown } from './lib/markdown.js';
 import { loadSession, saveSession } from './lib/session.js';
+import { runStateDetection } from './lib/state-decisions.js';
+import { saveExtractedDecisions } from './lib/decisions.js';
 import { logger } from './lib/logger.js';
 
 const WORKING_DIR = process.env['HANDOFF_DAEMON_WORKING_DIR'] ?? process.cwd();
@@ -78,6 +80,15 @@ async function main(): Promise<void> {
           session.file_hashes = newHashes;
           session.last_export = new Date().toISOString();
           await saveSession(WORKING_DIR, session);
+
+          // Run state-based tech detection on each regen cycle
+          const stateDecisions = await runStateDetection(WORKING_DIR);
+          if (stateDecisions.length > 0) {
+            const saved = await saveExtractedDecisions(WORKING_DIR, stateDecisions, 0.6);
+            if (saved.length > 0) {
+              logger.info('Daemon: tech stack change detected', { decisions: saved.length });
+            }
+          }
 
           logger.info('Daemon: HANDOFF.md regenerated', { changes: changes.length });
         } catch (err) {
