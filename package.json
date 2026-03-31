@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Seamless context transfer, decision journaling, and workspace management for AI coding agents",
   "bin": {
-    "handoff": "./dist/index.js"
+    "handoff": "dist/index.js"
   },
   "files": [
     "dist",
@@ -50,7 +50,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sahilraut22/Handoff.git"
+    "url": "git+https://github.com/sahilraut22/Handoff.git"
   },
   "homepage": "https://github.com/sahilraut22/Handoff#readme",
   "bugs": {
