@@ -1,4 +1,4 @@
-import { stat, access } from 'node:fs/promises';
+import { stat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { extractDecisions } from './decision-extractor.js';
@@ -9,8 +9,8 @@ export type { MonitorConfig, MonitoredAgent };
 // Known log file locations per agent (paths relative to home dir)
 const AGENT_LOG_PATHS: Record<string, string[]> = {
   claude: [
-    '.claude/logs',
     '.claude/projects',
+    '.claude/logs',
   ],
   codex: [
     '.codex/logs',
@@ -40,7 +40,7 @@ export function discoverAgentLogs(agent: string): string[] {
 async function findExistingLogPath(paths: string[]): Promise<string | null> {
   for (const p of paths) {
     try {
-      await access(p);
+      await stat(p);
       return p;
     } catch {
       // Not found, try next
@@ -49,38 +49,73 @@ async function findExistingLogPath(paths: string[]): Promise<string | null> {
   return null;
 }
 
+/** Recursively find log files (.jsonl, .log, .txt) up to `depth` directory levels deep. */
+async function findLogFilesInDir(dir: string, depth: number): Promise<string[]> {
+  if (depth === 0) return [];
+  const files: string[] = [];
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isFile() && /\.(jsonl|log|txt)$/i.test(entry.name)) {
+        files.push(full);
+      } else if (entry.isDirectory() && depth > 1) {
+        files.push(...await findLogFilesInDir(full, depth - 1));
+      }
+    }
+  } catch {
+    // Directory inaccessible or gone
+  }
+  return files;
+}
+
+/** Resolve all log_paths to actual readable files, expanding directories recursively. */
+async function resolveLogFiles(logPaths: string[]): Promise<string[]> {
+  const files: string[] = [];
+  for (const p of logPaths) {
+    try {
+      const info = await stat(p);
+      if (info.isFile()) {
+        files.push(p);
+      } else if (info.isDirectory()) {
+        files.push(...await findLogFilesInDir(p, 2));
+      }
+    } catch {
+      // Path doesn't exist yet — skip
+    }
+  }
+  return files;
+}
+
 export interface LogMonitorHandle {
   start: () => void;
-  stop: () => void;
+  stop: () => Promise<void>;
   getExtracted: () => ExtractedDecision[];
 }
 
 export function createLogMonitor(config: MonitorConfig): LogMonitorHandle {
   let timer: ReturnType<typeof setInterval> | null = null;
-  let offset = config.last_read_offset;
-  let lastSize = 0;
+  // Per-file read offsets — files not yet seen start at 0 (or their size at baseline)
+  const fileOffsets = new Map<string, number>();
   const extracted: ExtractedDecision[] = [];
 
-  async function poll(logPath: string): Promise<void> {
+  async function readNewContent(filePath: string): Promise<void> {
     try {
-      const info = await stat(logPath);
-      const currentSize = info.size;
+      const info = await stat(filePath);
+      const currentOffset = fileOffsets.get(filePath) ?? 0;
 
       // Handle log rotation: file shrank
-      if (currentSize < lastSize) {
-        offset = 0;
-      }
-      lastSize = currentSize;
+      const adjustedOffset = info.size < currentOffset ? 0 : currentOffset;
 
-      if (currentSize <= offset) return;
+      if (info.size <= adjustedOffset) return;
 
-      // Read only new content since last offset
-      const fd = await import('node:fs/promises').then((m) => m.open(logPath, 'r'));
-      const buffer = Buffer.alloc(currentSize - offset);
-      await fd.read(buffer, 0, buffer.length, offset);
+      const { open } = await import('node:fs/promises');
+      const fd = await open(filePath, 'r');
+      const buffer = Buffer.alloc(info.size - adjustedOffset);
+      await fd.read(buffer, 0, buffer.length, adjustedOffset);
       await fd.close();
 
-      offset = currentSize;
+      fileOffsets.set(filePath, info.size);
       const newContent = buffer.toString('utf-8');
 
       if (newContent.trim()) {
@@ -91,24 +126,48 @@ export function createLogMonitor(config: MonitorConfig): LogMonitorHandle {
         extracted.push(...found);
       }
     } catch {
-      // Log file may not exist yet or be inaccessible
+      // File may not exist yet or be inaccessible
     }
   }
 
+  async function pollAll(): Promise<void> {
+    const files = await resolveLogFiles(config.log_paths);
+    await Promise.all(files.map((f) => readNewContent(f)));
+  }
+
   function start(): void {
-    if (!config.log_paths[0]) return;
-    const logPath = config.log_paths[0];
+    if (config.log_paths.length === 0) return;
+
+    // Snapshot baseline: record current sizes of all existing files so we only
+    // read content produced during this session (not old log history).
+    void resolveLogFiles(config.log_paths).then(async (files) => {
+      await Promise.all(
+        files.map(async (f) => {
+          try {
+            const info = await stat(f);
+            // Only set baseline if not already set (start() called once)
+            if (!fileOffsets.has(f)) {
+              fileOffsets.set(f, info.size);
+            }
+          } catch {
+            // File vanished between scan and stat — skip
+          }
+        })
+      );
+    });
 
     timer = setInterval(() => {
-      void poll(logPath);
+      void pollAll();
     }, config.poll_interval_ms);
   }
 
-  function stop(): void {
+  async function stop(): Promise<void> {
     if (timer) {
       clearInterval(timer);
       timer = null;
     }
+    // Final poll to capture content written in the last interval before agent exited
+    await pollAll();
   }
 
   function getExtracted(): ExtractedDecision[] {

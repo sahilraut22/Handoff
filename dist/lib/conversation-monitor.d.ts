@@ -3,7 +3,7 @@ export type { MonitorConfig, MonitoredAgent };
 export declare function discoverAgentLogs(agent: string): string[];
 export interface LogMonitorHandle {
     start: () => void;
-    stop: () => void;
+    stop: () => Promise<void>;
     getExtracted: () => ExtractedDecision[];
 }
 export declare function createLogMonitor(config: MonitorConfig): LogMonitorHandle;

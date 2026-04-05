@@ -74,7 +74,7 @@ export function registerRunCommand(program: Command): void {
         });
       });
 
-      logMonitor.stop();
+      await logMonitor.stop();
 
       // Extract decisions from log files captured during the session
       const allExtracted = logMonitor.getExtracted();

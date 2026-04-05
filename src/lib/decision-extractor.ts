@@ -73,6 +73,13 @@ const DEFAULT_PATTERNS: DecisionPattern[] = [
     confidence_base: 0.5,
     tag: 'pending',
   },
+  {
+    name: 'remember-to',
+    trigger: /\bremember\s+(?:to\s+)?(?:use|always use|always|apply|follow|prefer|avoid|never use|never)\s+.{5,120}/i,
+    context_window: 4,
+    confidence_base: 0.7,
+    tag: 'convention',
+  },
 ];
 
 const DEFAULT_EXTRACTION_CONFIG: ExtractionConfig = {

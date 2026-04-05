@@ -56,7 +56,7 @@ export function registerRunCommand(program) {
                 }
             });
         });
-        logMonitor.stop();
+        await logMonitor.stop();
         // Extract decisions from log files captured during the session
         const allExtracted = logMonitor.getExtracted();
         if (allExtracted.length === 0) {
